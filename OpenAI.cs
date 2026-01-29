@@ -8,10 +8,11 @@ using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Oxide.Core;
+using Oxide.Core.Libraries.Covalence;
 
 namespace Oxide.Plugins
 {
-    [Info("OpenAI", "Goo_", "2.0.0")]
+    [Info("OpenAI", "Goo_", "2.1.0")]
     [Description("AI assistant using OpenAI Responses API")]
     public class OpenAI : RustPlugin
     {
@@ -20,7 +21,7 @@ namespace Oxide.Plugins
         private const string PermissionUse = "openai.use";
         private const string PermissionAdmin = "openai.admin";
         private const string PermissionUnlimited = "openai.unlimited";
-        private const string PluginVersion = "2.0.0";
+        private const string PluginVersion = "2.1.0";
 
         private const int DefaultMaxOutputTokens = 2048;
         private const int DefaultCooldownSeconds = 10;
@@ -29,6 +30,27 @@ namespace Oxide.Plugins
         private const int DefaultPlayerDailyTokenLimit = 15000;
         private const int DefaultMaxInputLength = 500;
         private const int DefaultMaxChunkSize = 450;
+
+        // Static injection patterns to avoid allocations per message
+        private static readonly string[] InjectionPatterns =
+        {
+            "ignore previous",
+            "ignore all previous",
+            "disregard previous",
+            "forget previous",
+            "ignore your instructions",
+            "new instructions:",
+            "system prompt:",
+            "you are now",
+            "act as if",
+            "pretend you are",
+            "jailbreak",
+            "dan mode"
+        };
+
+        // Compiled Regex for hot paths
+        private static readonly Regex ControlCharsRegex = new Regex(@"[\x00-\x1F\x7F]", RegexOptions.Compiled);
+        private static readonly Regex MarkdownLinkRegex = new Regex(@"\[([^\]]+)\]\([^)]+\)", RegexOptions.Compiled);
 
         #endregion
 
@@ -241,6 +263,7 @@ namespace Oxide.Plugins
         {
             _config = new PluginConfig();
             SaveConfig();
+            RebuildCachedHeaders();
         }
 
         protected override void LoadConfig()
@@ -257,6 +280,7 @@ namespace Oxide.Plugins
                 ValidateConfig();
                 MigrateConfig();
                 SaveConfig();
+                RebuildCachedHeaders();
             }
             catch (Exception ex)
             {
@@ -299,41 +323,54 @@ namespace Oxide.Plugins
 
             var oldVersion = string.IsNullOrEmpty(_config.ConfigVersion) ? "0.0.0" : _config.ConfigVersion;
 
-            
-            if (CompareVersions(oldVersion, "3.3.0") < 0)
+            try
             {
-                if (_config.Prompt?.CustomInstructions != null)
+                if (CompareVersions(oldVersion, "3.3.0") < 0)
                 {
-                    var originalCount = _config.Prompt.CustomInstructions.Count;
-                    _config.Prompt.CustomInstructions = _config.Prompt.CustomInstructions
-                        .Distinct()
-                        .ToList();
+                    if (_config.Prompt?.CustomInstructions != null)
+                    {
+                        var originalCount = _config.Prompt.CustomInstructions.Count;
+                        _config.Prompt.CustomInstructions = _config.Prompt.CustomInstructions
+                            .Distinct()
+                            .ToList();
 
-                    if (originalCount != _config.Prompt.CustomInstructions.Count)
-                        PrintWarning($"Config migration: Removed {originalCount - _config.Prompt.CustomInstructions.Count} duplicate CustomInstructions");
+                        if (originalCount != _config.Prompt.CustomInstructions.Count)
+                            PrintWarning($"Config migration: Removed {originalCount - _config.Prompt.CustomInstructions.Count} duplicate CustomInstructions");
+                    }
                 }
-            }
 
-            
-            if (CompareVersions(oldVersion, PluginVersion) < 0)
+                if (CompareVersions(oldVersion, PluginVersion) < 0)
+                {
+                    PrintWarning("Config migration: 'Broadcast Responses' has been replaced with 'Global Chat Bot' feature.");
+                }
+
+                _config.ConfigVersion = PluginVersion;
+                Puts($"Config migrated from {oldVersion} to {PluginVersion}");
+            }
+            catch (Exception ex)
             {
-                // Migration to current version
-                PrintWarning("Config migration: 'Broadcast Responses' has been replaced with 'Global Chat Bot' feature.");
+                PrintWarning($"Config migration encountered an error: {ex.Message}. Setting version to current.");
+                _config.ConfigVersion = PluginVersion;
             }
-
-            _config.ConfigVersion = PluginVersion;
-            Puts($"Config migrated from {oldVersion} to {PluginVersion}");
         }
 
         private int CompareVersions(string v1, string v2)
         {
-            var parts1 = v1.Split('.').Select(int.Parse).ToArray();
-            var parts2 = v2.Split('.').Select(int.Parse).ToArray();
+            if (string.IsNullOrEmpty(v1)) v1 = "0.0.0";
+            if (string.IsNullOrEmpty(v2)) v2 = "0.0.0";
 
-            for (int i = 0; i < Math.Max(parts1.Length, parts2.Length); i++)
+            var rawParts1 = v1.Split('.');
+            var rawParts2 = v2.Split('.');
+
+            var maxLen = Math.Max(rawParts1.Length, rawParts2.Length);
+            for (int i = 0; i < maxLen; i++)
             {
-                var p1 = i < parts1.Length ? parts1[i] : 0;
-                var p2 = i < parts2.Length ? parts2[i] : 0;
+                int p1 = 0, p2 = 0;
+                if (i < rawParts1.Length)
+                    int.TryParse(rawParts1[i], out p1);
+                if (i < rawParts2.Length)
+                    int.TryParse(rawParts2[i], out p2);
+
                 if (p1 != p2) return p1.CompareTo(p2);
             }
             return 0;
@@ -410,6 +447,13 @@ namespace Oxide.Plugins
         private List<string> _availableModels;
         private Dictionary<string, ModelInfo> _modelInfoCache = new Dictionary<string, ModelInfo>();
 
+        // Cached HTTP headers to avoid allocations per request
+        private Dictionary<string, string> _cachedAuthHeaders;
+        private Dictionary<string, string> _cachedAuthHeadersWithJson;
+
+        // Cached compiled Regex for trigger patterns
+        private List<Regex> _cachedTriggerPatterns;
+
         
         private string _globalBotResponseId;
         private float _globalBotLastResponseTime;
@@ -433,6 +477,41 @@ namespace Oxide.Plugins
 
         #endregion
 
+        #region Localization
+
+        private void LoadDefaultMessages()
+        {
+            lang.RegisterMessages(new Dictionary<string, string>
+            {
+                ["NoQuestion"] = "Please provide a question after the command.",
+                ["NoPermission"] = "You don't have permission to use this command.",
+                ["NotConfigured"] = "AI assistant is not configured. Please contact an administrator.",
+                ["DisallowedContent"] = "Your message contains disallowed content.",
+                ["ServiceUnavailable"] = "Unable to reach the AI service. Please try again later.",
+                ["AuthenticationFailed"] = "AI service authentication failed. Please contact an administrator.",
+                ["RateLimited"] = "AI service is rate limited. Please try again in a moment.",
+                ["ConfigError"] = "Configuration error. Please contact an administrator.",
+                ["ModelError"] = "AI model configuration error. Please contact an administrator.",
+                ["RequestError"] = "Error processing your request.",
+                ["RequestErrorRetry"] = "Error processing your request. Please try again.",
+                ["ContentFiltered"] = "I cannot respond to that type of question.",
+                ["EmptyResponse"] = "Received an empty response. Please try rephrasing your question.",
+                ["ResponseError"] = "Error processing the AI response.",
+                ["CooldownWait"] = "Please wait {0} seconds before your next question.",
+                ["ServerBusy"] = "The AI is busy. Please try again in a moment.",
+                ["DailyBudgetReached"] = "Daily server AI budget has been reached. Try again tomorrow.",
+                ["PlayerLimitReached"] = "You've reached your daily AI usage limit. Try again tomorrow."
+            }, this);
+        }
+
+        private string GetMsg(string key, string playerId = null, params object[] args)
+        {
+            var message = lang.GetMessage(key, this, playerId);
+            return args.Length > 0 ? string.Format(message, args) : message;
+        }
+
+        #endregion
+
         #region Hooks
 
         private void Init()
@@ -440,6 +519,59 @@ namespace Oxide.Plugins
             permission.RegisterPermission(PermissionUse, this);
             permission.RegisterPermission(PermissionAdmin, this);
             permission.RegisterPermission(PermissionUnlimited, this);
+
+            LoadDefaultMessages();
+            RegisterCustomCommand();
+        }
+
+        private void RegisterCustomCommand()
+        {
+            if (string.IsNullOrEmpty(_config?.Chat?.CommandPrefix))
+                return;
+
+            var prefix = _config.Chat.CommandPrefix.Trim();
+
+            // Register as a chat/console command if it starts with /
+            if (prefix.StartsWith("/"))
+            {
+                var commandName = prefix.Substring(1).ToLower();
+                if (!string.IsNullOrEmpty(commandName))
+                {
+                    AddCovalenceCommand(commandName, nameof(CommandAI));
+                    Puts($"Registered command: /{commandName}");
+                }
+            }
+        }
+
+        private void CommandAI(IPlayer iplayer, string command, string[] args)
+        {
+            var player = iplayer.Object as BasePlayer;
+            if (player == null)
+            {
+                iplayer.Reply("This command can only be used in-game.");
+                return;
+            }
+
+            if (!permission.UserHasPermission(player.UserIDString, PermissionUse))
+            {
+                SendPlayerMessage(player, GetMsg("NoPermission", player.UserIDString));
+                return;
+            }
+
+            if (!_apiKeyValid)
+            {
+                SendPlayerMessage(player, GetMsg("NotConfigured", player.UserIDString));
+                return;
+            }
+
+            var question = string.Join(" ", args).Trim();
+            if (string.IsNullOrEmpty(question))
+            {
+                SendPlayerMessage(player, GetMsg("NoQuestion", player.UserIDString));
+                return;
+            }
+
+            ProcessQuestion(player, question);
         }
 
         private void OnServerInitialized()
@@ -456,10 +588,9 @@ namespace Oxide.Plugins
                 LoadUsageData();
             }
 
-            
             LoadPersonalities();
+            RebuildCachedTriggerPatterns();
 
-            
             if (_config.Knowledge.Enabled)
             {
                 InitializeKnowledgeFolder();
@@ -515,26 +646,28 @@ namespace Oxide.Plugins
             if (player == null || string.IsNullOrEmpty(message))
                 return null;
 
-            
+            // Handle non-slash prefixes (e.g., "!ai")
+            // Slash commands are handled by the registered Covalence command
             if (!string.IsNullOrEmpty(_config.Chat.CommandPrefix) &&
+                !_config.Chat.CommandPrefix.StartsWith("/") &&
                 message.StartsWith(_config.Chat.CommandPrefix, StringComparison.OrdinalIgnoreCase))
             {
                 var question = message.Substring(_config.Chat.CommandPrefix.Length).Trim();
                 if (string.IsNullOrEmpty(question))
                 {
-                    SendPlayerMessage(player, "Please provide a question after the command.");
+                    SendPlayerMessage(player, GetMsg("NoQuestion", player.UserIDString));
                     return true;
                 }
 
                 if (!permission.UserHasPermission(player.UserIDString, PermissionUse))
                 {
-                    SendPlayerMessage(player, "You don't have permission to use this command.");
+                    SendPlayerMessage(player, GetMsg("NoPermission", player.UserIDString));
                     return true;
                 }
 
                 if (!_apiKeyValid)
                 {
-                    SendPlayerMessage(player, "AI assistant is not configured. Please contact an administrator.");
+                    SendPlayerMessage(player, GetMsg("NotConfigured", player.UserIDString));
                     return true;
                 }
 
@@ -542,11 +675,10 @@ namespace Oxide.Plugins
                 return true;
             }
 
-            
+            // Global chat bot monitoring
             if (_config.GlobalBot.Enabled && ShouldBotRespond(message, channel))
             {
                 ProcessGlobalBotQuestion(player, message, channel);
-                
             }
 
             return null;
@@ -574,7 +706,7 @@ namespace Oxide.Plugins
             var sanitizedQuestion = SanitizeInput(question);
             if (sanitizedQuestion == null)
             {
-                SendPlayerMessage(player, "Your message contains disallowed content.");
+                SendPlayerMessage(player, GetMsg("DisallowedContent", player.UserIDString));
                 return;
             }
 
@@ -655,7 +787,7 @@ namespace Oxide.Plugins
 
             if (_config.Prompt.IncludePlayerNames && player != null)
             {
-                sb.Append($"\n\nYou are talking to: {player.displayName}");
+                sb.Append($"\n\nThe player you are talking to is named \"{player.displayName}\". Use this name when addressing them.");
             }
 
             if (_config.Prompt.CustomInstructions != null && _config.Prompt.CustomInstructions.Count > 0)
@@ -730,22 +862,60 @@ namespace Oxide.Plugins
             }
         }
 
+        private void RebuildCachedTriggerPatterns()
+        {
+            _cachedTriggerPatterns = new List<Regex>();
+            if (_config.GlobalBot?.TriggerPatterns == null)
+                return;
+
+            foreach (var pattern in _config.GlobalBot.TriggerPatterns)
+            {
+                if (string.IsNullOrEmpty(pattern))
+                    continue;
+
+                try
+                {
+                    var escaped = Regex.Escape(pattern.ToLower());
+                    string regexPattern;
+
+                    // For punctuation-only patterns (like "?"), just match the literal character
+                    // For word patterns (like "@bot"), use word boundaries to avoid partial matches
+                    if (pattern.All(c => !char.IsLetterOrDigit(c)))
+                    {
+                        // Punctuation pattern - simple contains match
+                        regexPattern = escaped;
+                    }
+                    else
+                    {
+                        // Word pattern - use word boundaries
+                        regexPattern = $@"(?<!\w){escaped}(?!\w)";
+                    }
+
+                    _cachedTriggerPatterns.Add(new Regex(regexPattern, RegexOptions.Compiled | RegexOptions.IgnoreCase));
+                }
+                catch (Exception ex)
+                {
+                    PrintWarning($"Invalid trigger pattern '{pattern}': {ex.Message}");
+                }
+            }
+        }
+
         private bool ShouldBotRespond(string message, ConVar.Chat.ChatChannel channel)
         {
-            
             if (channel == ConVar.Chat.ChatChannel.Global && !_config.GlobalBot.MonitorGlobalChat)
                 return false;
             if (channel == ConVar.Chat.ChatChannel.Team && !_config.GlobalBot.MonitorTeamChat)
                 return false;
             if (channel != ConVar.Chat.ChatChannel.Global && channel != ConVar.Chat.ChatChannel.Team)
-                return false;  
+                return false;
 
-            
-            var lowerMessage = message.ToLower();
-            foreach (var pattern in _config.GlobalBot.TriggerPatterns)
+            if (_cachedTriggerPatterns == null || _cachedTriggerPatterns.Count == 0)
+                return false;
+
+            // Use cached compiled regex for word boundary matching
+            foreach (var regex in _cachedTriggerPatterns)
             {
-                var lowerPattern = pattern.ToLower();
-                if (lowerMessage.EndsWith(lowerPattern) || lowerMessage.Contains(" " + lowerPattern))
+                if (regex.IsMatch(message))
                     return true;
             }
 
@@ -826,18 +996,12 @@ namespace Oxide.Plugins
         {
             var lowerMessage = message.ToLower();
 
-            
-            var playerNames = BasePlayer.activePlayerList
-                .Select(p => p.displayName.ToLower())
-                .Where(n => n.Length >= 3)  
-                .ToList();
-
-            foreach (var name in playerNames)
+            // Iterate directly without LINQ ToList allocation
+            foreach (var player in BasePlayer.activePlayerList)
             {
-                
-                
-                
-                
+                var name = player.displayName?.ToLower();
+                if (string.IsNullOrEmpty(name) || name.Length < 3)
+                    continue;
 
                 if (lowerMessage.StartsWith(name + ",") ||
                     lowerMessage.StartsWith(name + " ") ||
@@ -1201,22 +1365,23 @@ namespace Oxide.Plugins
         private string CheckRateLimits(BasePlayer player, PlayerSession session)
         {
             var currentTime = UnityEngine.Time.realtimeSinceStartup;
+            var playerId = player?.UserIDString;
 
             var timeSinceLastRequest = currentTime - session.LastRequestTime;
             if (timeSinceLastRequest < _config.RateLimits.CooldownSeconds)
             {
                 var remaining = _config.RateLimits.CooldownSeconds - (int)timeSinceLastRequest;
-                return $"Please wait {remaining} seconds before your next question.";
+                return GetMsg("CooldownWait", playerId, remaining);
             }
 
             if (_globalRequestsThisMinute >= _config.RateLimits.MaxRequestsPerMinute)
-                return "The AI is busy. Please try again in a moment.";
+                return GetMsg("ServerBusy", playerId);
 
             if (_globalTokensToday >= _config.RateLimits.DailyTokenBudget)
-                return "Daily server AI budget has been reached. Try again tomorrow.";
+                return GetMsg("DailyBudgetReached", playerId);
 
             if (session.TokensUsedToday >= _config.RateLimits.PlayerDailyTokenLimit)
-                return "You've reached your daily AI usage limit. Try again tomorrow.";
+                return GetMsg("PlayerLimitReached", playerId);
 
             return null;
         }
@@ -1354,6 +1519,8 @@ namespace Oxide.Plugins
             if (player == null || !player.IsConnected)
                 return;
 
+            var playerId = player.UserIDString;
+
             if (code == 0 || code >= 500)
             {
                 if (attempt < _config.Api.RetryAttempts)
@@ -1362,14 +1529,14 @@ namespace Oxide.Plugins
                     timer.Once(delay, () => SendApiRequest(player, payload, session, attempt + 1));
                     return;
                 }
-                SendPlayerMessage(player, "Unable to reach the AI service. Please try again later.");
+                SendPlayerMessage(player, GetMsg("ServiceUnavailable", playerId));
                 PrintError($"API request failed after {attempt} attempts. Code: {code}");
                 return;
             }
 
             if (code == 401)
             {
-                SendPlayerMessage(player, "AI service authentication failed. Please contact an administrator.");
+                SendPlayerMessage(player, GetMsg("AuthenticationFailed", playerId));
                 PrintError("API authentication failed. Check your API key.");
                 _apiKeyValid = false;
                 return;
@@ -1377,7 +1544,7 @@ namespace Oxide.Plugins
 
             if (code == 429)
             {
-                SendPlayerMessage(player, "AI service is rate limited. Please try again in a moment.");
+                SendPlayerMessage(player, GetMsg("RateLimited", playerId));
                 return;
             }
 
@@ -1390,24 +1557,24 @@ namespace Oxide.Plugins
 
                     if (errorMsg.Contains("reasoning") || errorMsg.Contains("effort"))
                     {
-                        SendPlayerMessage(player, "Configuration error. Please contact an administrator.");
+                        SendPlayerMessage(player, GetMsg("ConfigError", playerId));
                         PrintError($"Reasoning effort '{_config.Api.ReasoningEffort}' is not valid for model '{_config.Api.Model}'");
                         PrintError("Run 'openai.status' to diagnose, then reload the plugin after fixing the config.");
                     }
                     else if (errorMsg.Contains("model"))
                     {
-                        SendPlayerMessage(player, "AI model configuration error. Please contact an administrator.");
+                        SendPlayerMessage(player, GetMsg("ModelError", playerId));
                         PrintError($"Model error: {errorMsg}");
                     }
                     else
                     {
-                        SendPlayerMessage(player, "Error processing your request.");
+                        SendPlayerMessage(player, GetMsg("RequestError", playerId));
                         PrintError($"API error 400: {errorMsg}");
                     }
                 }
                 catch
                 {
-                    SendPlayerMessage(player, "Error processing your request.");
+                    SendPlayerMessage(player, GetMsg("RequestError", playerId));
                     PrintError($"API error 400: {response}");
                 }
                 return;
@@ -1415,7 +1582,7 @@ namespace Oxide.Plugins
 
             if (code != 200)
             {
-                SendPlayerMessage(player, "Error processing your request. Please try again.");
+                SendPlayerMessage(player, GetMsg("RequestErrorRetry", playerId));
                 PrintError($"API error {code}: {response}");
                 return;
             }
@@ -1449,7 +1616,7 @@ namespace Oxide.Plugins
                     var incompleteReason = json["incomplete_details"]?["reason"]?.ToString();
                     if (incompleteReason == "content_filter")
                     {
-                        SendPlayerMessage(player, "I cannot respond to that type of question.");
+                        SendPlayerMessage(player, GetMsg("ContentFiltered", playerId));
                         return;
                     }
                 }
@@ -1457,11 +1624,11 @@ namespace Oxide.Plugins
                 var outputText = ExtractResponseText(json);
                 if (string.IsNullOrEmpty(outputText))
                 {
-                    SendPlayerMessage(player, "Received an empty response. Please try rephrasing your question.");
+                    SendPlayerMessage(player, GetMsg("EmptyResponse", playerId));
                     return;
                 }
 
-                
+                // Strip URLs from markdown links if configured
                 if (_config.Chat.StripUrlsFromLinks)
                 {
                     outputText = StripUrlsFromMarkdownLinks(outputText);
@@ -1477,7 +1644,7 @@ namespace Oxide.Plugins
             }
             catch (Exception ex)
             {
-                SendPlayerMessage(player, "Error processing the AI response.");
+                SendPlayerMessage(player, GetMsg("ResponseError", playerId));
                 PrintError($"Response parsing error: {ex.Message}");
             }
         }
@@ -1560,14 +1727,16 @@ namespace Oxide.Plugins
 
         private List<string> ChunkMessage(string message)
         {
-            var chunks = new List<string>();
             var maxSize = _config.Chat.MaxChunkSize;
 
             if (message.Length <= maxSize)
             {
-                chunks.Add(message);
-                return chunks;
+                return new List<string>(1) { message };
             }
+
+            // Pre-size list to estimated capacity to avoid resizes
+            var capacity = Math.Max(1, (message.Length + maxSize - 1) / maxSize);
+            var chunks = new List<string>(capacity);
 
             var remaining = message;
             while (remaining.Length > 0)
@@ -1962,21 +2131,31 @@ namespace Oxide.Plugins
             Puts("Created server-info.txt. Add more .txt files and run 'openai.kb sync' to upload.");
         }
 
-        private Dictionary<string, string> GetAuthHeaders()
+        private void RebuildCachedHeaders()
         {
-            return new Dictionary<string, string>
+            _cachedAuthHeaders = new Dictionary<string, string>
             {
                 ["Authorization"] = $"Bearer {_config.Api.ApiKey}"
             };
-        }
-
-        private Dictionary<string, string> GetAuthHeadersWithJson()
-        {
-            return new Dictionary<string, string>
+            _cachedAuthHeadersWithJson = new Dictionary<string, string>
             {
                 ["Authorization"] = $"Bearer {_config.Api.ApiKey}",
                 ["Content-Type"] = "application/json"
             };
+        }
+
+        private Dictionary<string, string> GetAuthHeaders()
+        {
+            if (_cachedAuthHeaders == null)
+                RebuildCachedHeaders();
+            return _cachedAuthHeaders;
+        }
+
+        private Dictionary<string, string> GetAuthHeadersWithJson()
+        {
+            if (_cachedAuthHeadersWithJson == null)
+                RebuildCachedHeaders();
+            return _cachedAuthHeadersWithJson;
         }
 
         private void ListVectorStores(Action<List<VectorStoreInfo>> callback)
@@ -3123,30 +3302,14 @@ namespace Oxide.Plugins
             if (_config.Security.FilterInjection)
             {
                 var lowerInput = input.ToLower();
-                var injectionPatterns = new[]
-                {
-                    "ignore previous",
-                    "ignore all previous",
-                    "disregard previous",
-                    "forget previous",
-                    "ignore your instructions",
-                    "new instructions:",
-                    "system prompt:",
-                    "you are now",
-                    "act as if",
-                    "pretend you are",
-                    "jailbreak",
-                    "dan mode"
-                };
-
-                foreach (var pattern in injectionPatterns)
+                foreach (var pattern in InjectionPatterns)
                 {
                     if (lowerInput.Contains(pattern))
                         return null;
                 }
             }
 
-            input = Regex.Replace(input, @"[\x00-\x1F\x7F]", "");
+            input = ControlCharsRegex.Replace(input, "");
 
             return input.Trim();
         }
@@ -3156,9 +3319,7 @@ namespace Oxide.Plugins
             if (string.IsNullOrEmpty(text))
                 return text;
 
-            
-            
-            return Regex.Replace(text, @"\[([^\]]+)\]\([^)]+\)", "[$1]");
+            return MarkdownLinkRegex.Replace(text, "[$1]");
         }
 
         #endregion

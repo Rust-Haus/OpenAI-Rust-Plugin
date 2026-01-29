@@ -1,4 +1,4 @@
-# OpenAI Plugin v2.0.0
+# OpenAI Plugin v2.1.0
 
 AI assistant plugin for Rust game servers using the OpenAI Responses API. Players can ask questions in-game and receive AI-powered responses.
 
@@ -2024,52 +2024,18 @@ Remember to disable after troubleshooting to reduce log spam.
 
 ## Changelog
 
-### v3.4.0
-- Added Global Chat Bot feature for automatic chat monitoring
-- Added bot personality system with external .txt files
-- Added team chat support with separate contexts per team
-- Added BetterChat integration toggle for styled bot messages
-- Added `openai.clearbot` command to clear bot contexts
-- Added `openai.personalities` command to manage personalities
-- Added separate token budget option for bot
-- Added heuristic filtering to avoid responding to player-to-player chat
-- Added AI-level [SKIP] response for irrelevant questions
-- Removed `Broadcast Responses` setting (replaced by Global Chat Bot)
-- Updated `openai.usage` to show bot statistics
+### v2.1.0
+  - Multi-Language Support (Localization)
+  - Improved Trigger Pattern Detection" Fixed trigger patterns not matching when followed by punctuation or special characters at the start of messages with `@` prefix.
+  - Custom Command Registration (Slash Commands): You can now use slash-style commands like `/askai` instead of chat prefixes like `!ai`.
 
-### v3.3.0
-- Added config version tracking and automatic migration system
-- Fixed duplicate CustomInstructions bug on config reload
-- Added `ObjectCreationHandling.Replace` to prevent JSON.NET list duplication
-
-### v3.2.0
-- Added Knowledge Base system with OpenAI Vector Stores
-- Added `openai.kb` commands for knowledge base management
-- Added `openai.testmodel` for comprehensive capability testing
-- Added `openai.clearcontext` command
-- Added `openai.resetusage` command
-- Added persistent usage data (survives restarts)
-- Added Discord logging for admin commands
-- Improved file search integration
-
-### v3.1.0
-- Added smart setup validation system
-- Added model discovery via OpenAI `/v1/models` endpoint
-- Added automatic reasoning model detection
-- Added console commands: `openai.status`, `openai.models`, `openai.test`
-- Added "Strip URLs from Links" option
-- Added `minimal` reasoning effort option
-- Enhanced error handling with specific messages
-- Improved startup logging
-
-### v3.0.0
-- Complete rewrite with modern architecture
-- Added `previous_response_id` for conversation continuity
-- Added multi-tier rate limiting
-- Added `openai.unlimited` permission
-- Added reasoning mode and web search support
-- Added prompt injection filtering
-- Added retry with exponential backoff
-- Added Discord rich embeds
-- Improved message chunking
+**Configuration example:**
+```json
+{
+  "Chat Settings": {
+    "Command Prefix": "/askai"
+  }
+}
+```
+ 
 
