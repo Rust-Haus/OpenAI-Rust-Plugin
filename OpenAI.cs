@@ -11,7 +11,7 @@ using Oxide.Core;
 
 namespace Oxide.Plugins
 {
-    [Info("OpenAI", "Goo_", "3.4.0")]
+    [Info("OpenAI", "Goo_", "2.0.0")]
     [Description("AI assistant using OpenAI Responses API")]
     public class OpenAI : RustPlugin
     {
@@ -20,7 +20,7 @@ namespace Oxide.Plugins
         private const string PermissionUse = "openai.use";
         private const string PermissionAdmin = "openai.admin";
         private const string PermissionUnlimited = "openai.unlimited";
-        private const string PluginVersion = "3.4.0";
+        private const string PluginVersion = "2.0.0";
 
         private const int DefaultMaxOutputTokens = 2048;
         private const int DefaultCooldownSeconds = 10;
@@ -299,7 +299,7 @@ namespace Oxide.Plugins
 
             var oldVersion = string.IsNullOrEmpty(_config.ConfigVersion) ? "0.0.0" : _config.ConfigVersion;
 
-            // Migration to 3.3.0: Fix duplicate CustomInstructions bug
+            
             if (CompareVersions(oldVersion, "3.3.0") < 0)
             {
                 if (_config.Prompt?.CustomInstructions != null)
@@ -314,12 +314,10 @@ namespace Oxide.Plugins
                 }
             }
 
-            // Migration to 3.4.0: Replace BroadcastResponses with Global Chat Bot
-            if (CompareVersions(oldVersion, "3.4.0") < 0)
+            
+            if (CompareVersions(oldVersion, PluginVersion) < 0)
             {
-                // Broadcast Responses is being replaced by Global Chat Bot
-                // The field will be removed automatically when config is saved
-                // (since it's no longer in the class definition)
+                // Migration to current version
                 PrintWarning("Config migration: 'Broadcast Responses' has been replaced with 'Global Chat Bot' feature.");
             }
 
@@ -412,19 +410,19 @@ namespace Oxide.Plugins
         private List<string> _availableModels;
         private Dictionary<string, ModelInfo> _modelInfoCache = new Dictionary<string, ModelInfo>();
 
-        // Global bot context (shared across all players in global chat)
+        
         private string _globalBotResponseId;
         private float _globalBotLastResponseTime;
         private int _globalBotTokensToday;
 
-        // Team bot contexts (each team has their own private context)
-        // Key = team ID (team leader's userID), Value = last response ID
+        
+        
         private Dictionary<ulong, string> _teamBotResponseIds = new Dictionary<ulong, string>();
 
-        // Personality presets (loaded from data folder)
+        
         private Dictionary<string, string> _personalities = new Dictionary<string, string>();
 
-        // Default personalities (created if folder is empty)
+        
         private static readonly Dictionary<string, string> DefaultPersonalities = new Dictionary<string, string>
         {
             ["helpful"] = "You are a helpful chat bot on a Rust game server. Answer questions briefly and helpfully.",
@@ -435,8 +433,7 @@ namespace Oxide.Plugins
 
         #endregion
 
-
-        #region Oxide Hooks
+        #region Hooks
 
         private void Init()
         {
@@ -453,22 +450,22 @@ namespace Oxide.Plugins
             timer.Every(60f, ResetMinuteCounter);
             timer.Every(300f, CheckDailyReset);
 
-            // Load persisted usage data
+            
             if (_config.RateLimits.PersistUsageData)
             {
                 LoadUsageData();
             }
 
-            // Load bot personalities from data folder
+            
             LoadPersonalities();
 
-            // Initialize knowledge folder if enabled
+            
             if (_config.Knowledge.Enabled)
             {
                 InitializeKnowledgeFolder();
             }
 
-            // Validate API key first
+            
             if (string.IsNullOrEmpty(_config.Api.ApiKey))
             {
                 PrintError("=== OpenAI Plugin Setup Required ===");
@@ -477,7 +474,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            // Fetch available models and validate setup
+            
             Puts("Validating OpenAI configuration...");
             FetchAvailableModels(success =>
             {
@@ -518,7 +515,7 @@ namespace Oxide.Plugins
             if (player == null || string.IsNullOrEmpty(message))
                 return null;
 
-            // --- Existing !ai command handling ---
+            
             if (!string.IsNullOrEmpty(_config.Chat.CommandPrefix) &&
                 message.StartsWith(_config.Chat.CommandPrefix, StringComparison.OrdinalIgnoreCase))
             {
@@ -545,11 +542,11 @@ namespace Oxide.Plugins
                 return true;
             }
 
-            // --- Global Chat Bot handling ---
+            
             if (_config.GlobalBot.Enabled && ShouldBotRespond(message, channel))
             {
                 ProcessGlobalBotQuestion(player, message, channel);
-                // Return null - let the original message appear in chat
+                
             }
 
             return null;
@@ -599,7 +596,7 @@ namespace Oxide.Plugins
                 ["truncation"] = "auto"
             };
 
-            // Only include max_output_tokens if set (0 = use model default)
+            
             if (_config.Api.MaxOutputTokens > 0)
             {
                 payload["max_output_tokens"] = _config.Api.MaxOutputTokens;
@@ -608,7 +605,7 @@ namespace Oxide.Plugins
             if (!string.IsNullOrEmpty(session.LastResponseId))
                 payload["previous_response_id"] = session.LastResponseId;
 
-            // Send reasoning parameter if not "none" (reasoning models require this)
+            
             if (_config.Api.ReasoningEffort.ToLower() != "none")
             {
                 payload["reasoning"] = new Dictionary<string, object>
@@ -617,7 +614,7 @@ namespace Oxide.Plugins
                 };
             }
 
-            // Build tools list
+            
             var tools = new List<object>();
 
             if (_config.Api.EnableWebSearch)
@@ -629,7 +626,7 @@ namespace Oxide.Plugins
                 });
             }
 
-            // Add file search if knowledge base is enabled and vector store is configured
+            
             if (_config.Knowledge.Enabled && !string.IsNullOrEmpty(_config.Knowledge.VectorStoreId))
             {
                 tools.Add(new Dictionary<string, object>
@@ -686,13 +683,13 @@ namespace Oxide.Plugins
         {
             var path = GetPersonalitiesPath();
 
-            // Create folder if it doesn't exist
+            
             if (!Directory.Exists(path))
             {
                 Directory.CreateDirectory(path);
                 Puts($"Created personalities folder: {path}");
 
-                // Create default personality files
+                
                 foreach (var kv in DefaultPersonalities)
                 {
                     var filePath = Path.Combine(path, $"{kv.Key}.txt");
@@ -701,7 +698,7 @@ namespace Oxide.Plugins
                 Puts($"Created {DefaultPersonalities.Count} default personality files.");
             }
 
-            // Load all .txt files as personalities
+            
             _personalities.Clear();
             var files = Directory.GetFiles(path, "*.txt");
 
@@ -725,7 +722,7 @@ namespace Oxide.Plugins
 
             Puts($"Loaded {_personalities.Count} bot personalities.");
 
-            // Validate configured personality exists
+            
             var configuredPreset = _config.GlobalBot.PersonalityPreset.ToLower();
             if (configuredPreset != "custom" && !_personalities.ContainsKey(configuredPreset))
             {
@@ -735,15 +732,15 @@ namespace Oxide.Plugins
 
         private bool ShouldBotRespond(string message, ConVar.Chat.ChatChannel channel)
         {
-            // Check channel settings
+            
             if (channel == ConVar.Chat.ChatChannel.Global && !_config.GlobalBot.MonitorGlobalChat)
                 return false;
             if (channel == ConVar.Chat.ChatChannel.Team && !_config.GlobalBot.MonitorTeamChat)
                 return false;
             if (channel != ConVar.Chat.ChatChannel.Global && channel != ConVar.Chat.ChatChannel.Team)
-                return false;  // Ignore other channels (cards, local, etc.)
+                return false;  
 
-            // Check if message matches any trigger pattern
+            
             var lowerMessage = message.ToLower();
             foreach (var pattern in _config.GlobalBot.TriggerPatterns)
             {
@@ -757,52 +754,52 @@ namespace Oxide.Plugins
 
         private void ProcessGlobalBotQuestion(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
         {
-            // 1. Check cooldown
+            
             var currentTime = UnityEngine.Time.realtimeSinceStartup;
             if (currentTime - _globalBotLastResponseTime < _config.GlobalBot.CooldownSeconds)
                 return;
 
-            // 2. Check rate limits
+            
             if (_globalRequestsThisMinute >= _config.RateLimits.MaxRequestsPerMinute)
                 return;
 
-            // 3. Check token budget (separate or shared)
+            
             if (_config.GlobalBot.DailyTokenBudget > 0)
             {
-                // Separate budget for bot
+                
                 if (_globalBotTokensToday >= _config.GlobalBot.DailyTokenBudget)
                     return;
             }
             else
             {
-                // Shared budget with main
+                
                 if (_globalTokensToday >= _config.RateLimits.DailyTokenBudget)
                     return;
             }
 
-            // 4. Heuristic filter - skip if directed at a player
+            
             if (IsDirectedAtPlayer(message))
                 return;
 
-            // 5. Sanitize input
+            
             var sanitizedMessage = SanitizeInput(message);
             if (sanitizedMessage == null)
                 return;
 
-            // 6. Update counters
+            
             _globalBotLastResponseTime = currentTime;
             _globalRequestsThisMinute++;
 
-            // 7. Get team ID if team chat (0 for global)
+            
             ulong teamId = 0;
             if (channel == ConVar.Chat.ChatChannel.Team)
             {
                 teamId = GetPlayerTeamId(player);
                 if (teamId == 0)
-                    return;  // Player not in a team, can't use team chat bot
+                    return;  
             }
 
-            // 8. Build and send request
+            
             var payload = BuildGlobalBotPayload(player, sanitizedMessage, channel, teamId);
             SendGlobalBotRequest(payload, channel, player, teamId);
         }
@@ -829,18 +826,18 @@ namespace Oxide.Plugins
         {
             var lowerMessage = message.ToLower();
 
-            // Get list of online player names
+            
             var playerNames = BasePlayer.activePlayerList
                 .Select(p => p.displayName.ToLower())
-                .Where(n => n.Length >= 3)  // Skip very short names
+                .Where(n => n.Length >= 3)  
                 .ToList();
 
             foreach (var name in playerNames)
             {
-                // Check common direct-address patterns:
-                // "name, ..." or "name ..." at start
-                // "@name" anywhere
-                // "hey name" at start
+                
+                
+                
+                
 
                 if (lowerMessage.StartsWith(name + ",") ||
                     lowerMessage.StartsWith(name + " ") ||
@@ -859,7 +856,7 @@ namespace Oxide.Plugins
         {
             var instructions = BuildGlobalBotInstructions(channel);
 
-            // Include who asked the question
+            
             var input = $"[{player.displayName}]: {question}";
 
             var payload = new Dictionary<string, object>
@@ -874,23 +871,23 @@ namespace Oxide.Plugins
             if (_config.Api.MaxOutputTokens > 0)
                 payload["max_output_tokens"] = _config.Api.MaxOutputTokens;
 
-            // Use appropriate context based on channel
+            
             string previousResponseId = null;
             if (channel == ConVar.Chat.ChatChannel.Team && teamId > 0)
             {
-                // Team chat - use team-specific context
+                
                 _teamBotResponseIds.TryGetValue(teamId, out previousResponseId);
             }
             else
             {
-                // Global chat - use shared global context
+                
                 previousResponseId = _globalBotResponseId;
             }
 
             if (!string.IsNullOrEmpty(previousResponseId))
                 payload["previous_response_id"] = previousResponseId;
 
-            // Add reasoning if configured
+            
             if (_config.Api.ReasoningEffort.ToLower() != "none")
             {
                 payload["reasoning"] = new Dictionary<string, object>
@@ -899,7 +896,7 @@ namespace Oxide.Plugins
                 };
             }
 
-            // Add tools (web search, knowledge base)
+            
             var tools = new List<object>();
             if (_config.Api.EnableWebSearch)
             {
@@ -927,7 +924,7 @@ namespace Oxide.Plugins
         {
             var sb = new StringBuilder();
 
-            // Get system prompt from personality preset or custom
+            
             var preset = _config.GlobalBot.PersonalityPreset.ToLower();
             if (preset == "custom" && !string.IsNullOrEmpty(_config.GlobalBot.CustomSystemPrompt))
             {
@@ -939,18 +936,18 @@ namespace Oxide.Plugins
             }
             else if (_personalities.TryGetValue("helpful", out var helpfulPrompt))
             {
-                sb.Append(helpfulPrompt);  // Fallback to helpful
+                sb.Append(helpfulPrompt);  
             }
             else if (_personalities.Count > 0)
             {
-                sb.Append(_personalities.Values.First());  // Fallback to first available
+                sb.Append(_personalities.Values.First());  
             }
             else
             {
-                sb.Append(DefaultPersonalities["helpful"]);  // Ultimate fallback
+                sb.Append(DefaultPersonalities["helpful"]);  
             }
 
-            // Add channel-specific context
+            
             if (channel == ConVar.Chat.ChatChannel.Team)
             {
                 sb.Append("\n\nYou are responding in a TEAM chat. Only team members can see this conversation.");
@@ -972,7 +969,7 @@ namespace Oxide.Plugins
                 sb.Append($"\nPlayers online: {BasePlayer.activePlayerList.Count}/{ConVar.Server.maxplayers}");
             }
 
-            // Include custom instructions from main config
+            
             if (_config.Prompt.CustomInstructions?.Count > 0)
             {
                 sb.Append("\n\nAdditional context:");
@@ -1016,50 +1013,50 @@ namespace Oxide.Plugins
             {
                 var json = JObject.Parse(response);
 
-                // Update appropriate context based on channel
+                
                 var responseId = json["id"]?.ToString();
                 if (!string.IsNullOrEmpty(responseId))
                 {
                     if (channel == ConVar.Chat.ChatChannel.Team && teamId > 0)
                     {
-                        // Update team-specific context
+                        
                         _teamBotResponseIds[teamId] = responseId;
                     }
                     else
                     {
-                        // Update global context
+                        
                         _globalBotResponseId = responseId;
                     }
                 }
 
-                // Track token usage (separate or shared budget)
+                
                 var tokensUsed = json["usage"]?["total_tokens"]?.Value<int>() ?? 0;
                 if (_config.GlobalBot.DailyTokenBudget > 0)
                     _globalBotTokensToday += tokensUsed;
                 else
                     _globalTokensToday += tokensUsed;
 
-                // Extract response text
+                
                 var outputText = ExtractResponseText(json);
                 if (string.IsNullOrEmpty(outputText))
                     return;
 
-                // Check for [SKIP] response
+                
                 if (outputText.Trim().Equals("[SKIP]", StringComparison.OrdinalIgnoreCase))
                     return;
 
-                // Also check for [SKIP] anywhere in short responses (AI sometimes adds explanation)
+                
                 if (outputText.Length < 50 && outputText.Contains("[SKIP]"))
                     return;
 
-                // Strip URLs if configured
+                
                 if (_config.Chat.StripUrlsFromLinks)
                     outputText = StripUrlsFromMarkdownLinks(outputText);
 
-                // Broadcast to appropriate channel/team
+                
                 BroadcastBotMessage(outputText, channel, teamId);
 
-                // Log to Discord if enabled
+                
                 if (_config.Discord.Enabled && !string.IsNullOrEmpty(_config.Discord.WebhookUrl))
                     SendBotToDiscord(outputText, channel);
             }
@@ -1089,14 +1086,14 @@ namespace Oxide.Plugins
 
                 if (channel == ConVar.Chat.ChatChannel.Team && teamId > 0)
                 {
-                    // Team chat - send only to team members
+                    
                     var teamMembers = GetTeamMembers(teamId);
                     foreach (var player in teamMembers)
                         player.ChatMessage(formatted);
                 }
                 else
                 {
-                    // Global chat - send to everyone
+                    
                     foreach (var player in BasePlayer.activePlayerList)
                         player.ChatMessage(formatted);
                 }
@@ -1115,7 +1112,7 @@ namespace Oxide.Plugins
 
             foreach (var chunk in chunks)
             {
-                // Format matching BetterChat's output pattern
+                
                 var formatted = $"<color=#{titleColor}><size={size}>{title}</size></color> " +
                                $"<color=#{nameColor}><size={size}>{botName}</size></color>: " +
                                $"<color=#{msgColor}><size={size}>{EscapeRichText(chunk)}</size></color>";
@@ -1238,7 +1235,7 @@ namespace Oxide.Plugins
             _lastDailyReset = DateTime.UtcNow.Date;
             _globalTokensToday = 0;
             _globalBotTokensToday = 0;
-            _teamBotResponseIds.Clear();  // Clear team contexts daily to prevent stale data
+            _teamBotResponseIds.Clear();  
 
             foreach (var session in _sessions.Values)
             {
@@ -1297,7 +1294,7 @@ namespace Oxide.Plugins
                 var data = Interface.Oxide.DataFileSystem.ReadObject<UsageData>("OpenAI/usage");
                 if (data == null) return;
 
-                // Check if data is from today
+                
                 if (data.LastReset.Date == DateTime.UtcNow.Date)
                 {
                     _lastDailyReset = data.LastReset;
@@ -1464,7 +1461,7 @@ namespace Oxide.Plugins
                     return;
                 }
 
-                // Strip URLs from markdown links if configured
+                
                 if (_config.Chat.StripUrlsFromLinks)
                 {
                     outputText = StripUrlsFromMarkdownLinks(outputText);
@@ -1688,7 +1685,7 @@ namespace Oxide.Plugins
                     {
                         ["title"] = title,
                         ["description"] = TruncateForDiscord(content, 4000),
-                        ["color"] = 3447003, // Blue
+                        ["color"] = 3447003, 
                         ["timestamp"] = DateTime.UtcNow.ToString("o")
                     }
                 }
@@ -1730,8 +1727,8 @@ namespace Oxide.Plugins
 
             var lower = model.ToLower();
 
-            // Reasoning models are o-series only (o1, o3, o4-mini, etc.)
-            // GPT models are NOT reasoning models
+            
+            
             if (lower.StartsWith("gpt"))
                 return false;
 
@@ -1811,8 +1808,8 @@ namespace Oxide.Plugins
             var info = new ModelInfo { Id = modelId };
             var lower = modelId.ToLower();
 
-            // Reasoning models are o-series only (o1, o3, o4-mini, etc.)
-            // GPT models (including gpt-4.1-nano) are NOT reasoning models
+            
+            
             if ((lower.StartsWith("o1") || lower.StartsWith("o3") || lower.StartsWith("o4"))
                 && !lower.StartsWith("gpt"))
             {
@@ -1825,7 +1822,7 @@ namespace Oxide.Plugins
                 info.ValidReasoningEfforts = new[] { "none" };
             }
 
-            // Web search support (most chat models support it)
+            
             info.SupportsWebSearch = lower.Contains("gpt") || !info.IsReasoningModel;
 
             return info;
@@ -1836,7 +1833,7 @@ namespace Oxide.Plugins
             if (_modelInfoCache.TryGetValue(modelId, out var cached))
                 return cached;
 
-            // Generate info for unknown models
+            
             var info = ClassifyModel(modelId);
             _modelInfoCache[modelId] = info;
             return info;
@@ -1846,7 +1843,7 @@ namespace Oxide.Plugins
         {
             var status = new SetupStatus();
 
-            // Check API key
+            
             if (string.IsNullOrEmpty(_config.Api.ApiKey))
             {
                 status.Errors.Add("No API key configured");
@@ -1854,14 +1851,14 @@ namespace Oxide.Plugins
             }
             status.ApiKeyValid = true;
 
-            // Check model availability
+            
             if (_availableModels != null && _availableModels.Count > 0)
             {
                 if (!_availableModels.Contains(_config.Api.Model))
                 {
                     status.Errors.Add($"Model '{_config.Api.Model}' is not available to your API key");
 
-                    // Suggest similar models
+                    
                     var suggestions = _availableModels
                         .Where(m => m.Contains("gpt") || m.StartsWith("o1") || m.StartsWith("o3") || m.Contains("nano"))
                         .Take(5)
@@ -1879,12 +1876,12 @@ namespace Oxide.Plugins
             }
             else
             {
-                // Could not fetch models, assume model is available
+                
                 status.ModelAvailable = true;
                 status.Warnings.Add("Could not verify model availability (API unreachable or no models returned)");
             }
 
-            // Check reasoning configuration
+            
             var modelInfo = GetModelInfo(_config.Api.Model);
             var effort = _config.Api.ReasoningEffort.ToLower();
 
@@ -1899,7 +1896,7 @@ namespace Oxide.Plugins
                 status.Suggestions.Add("Set 'Reasoning Effort' to 'none' for this model");
             }
 
-            // Check web search configuration
+            
             if (_config.Api.EnableWebSearch && !modelInfo.SupportsWebSearch)
             {
                 status.Warnings.Add($"Model '{_config.Api.Model}' may not support web search");
@@ -1958,7 +1955,7 @@ namespace Oxide.Plugins
             Directory.CreateDirectory(path);
             Puts($"Created knowledge folder: {path}");
 
-            // Create server info file
+            
             File.WriteAllText(Path.Combine(path, "server-info.txt"),
                 $"Server Name: {ConVar.Server.hostname}\nMax Players: {ConVar.Server.maxplayers}");
 
@@ -2075,7 +2072,7 @@ namespace Oxide.Plugins
                 var content = File.ReadAllBytes(filePath);
                 var fileName = Path.GetFileName(filePath);
 
-                // Build multipart form data
+                
                 var boundary = "----" + DateTime.Now.Ticks.ToString("x");
                 var bodyBytes = BuildMultipartBody(boundary, fileName, content, "assistants");
 
@@ -2103,12 +2100,12 @@ namespace Oxide.Plugins
         {
             var sb = new StringBuilder();
 
-            // Purpose field
+            
             sb.Append($"--{boundary}\r\n");
             sb.Append("Content-Disposition: form-data; name=\"purpose\"\r\n\r\n");
             sb.Append($"{purpose}\r\n");
 
-            // File field header
+            
             sb.Append($"--{boundary}\r\n");
             sb.Append($"Content-Disposition: form-data; name=\"file\"; filename=\"{fileName}\"\r\n");
             sb.Append("Content-Type: application/octet-stream\r\n\r\n");
@@ -2116,7 +2113,7 @@ namespace Oxide.Plugins
             var headerBytes = Encoding.UTF8.GetBytes(sb.ToString());
             var footerBytes = Encoding.UTF8.GetBytes($"\r\n--{boundary}--\r\n");
 
-            // Combine header + content + footer
+            
             var result = new byte[headerBytes.Length + content.Length + footerBytes.Length];
             Buffer.BlockCopy(headerBytes, 0, result, 0, headerBytes.Length);
             Buffer.BlockCopy(content, 0, result, headerBytes.Length, content.Length);
@@ -2308,7 +2305,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            // Check if we have a vector store configured
+            
             if (string.IsNullOrEmpty(_config.Knowledge.VectorStoreId))
             {
                 if (_config.Knowledge.AutoCreateVectorStore)
@@ -2325,7 +2322,7 @@ namespace Oxide.Plugins
                         _config.Knowledge.VectorStoreId = storeId;
                         SaveConfig();
                         Puts($"Created vector store: {storeId}");
-                        // New store, just upload all files
+                        
                         UploadNewFiles(localFiles, storeId, new Dictionary<string, string>());
                     });
                 }
@@ -2336,7 +2333,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            // Get existing files from vector store, then sync
+            
             Puts("Checking existing files in vector store...");
             GetRemoteFileMap(_config.Knowledge.VectorStoreId, remoteFiles =>
             {
@@ -2346,7 +2343,7 @@ namespace Oxide.Plugins
 
         private void GetRemoteFileMap(string vectorStoreId, Action<Dictionary<string, string>> callback)
         {
-            // Build a map of filename -> fileId for all files in the vector store
+            
             ListVectorStoreFiles(vectorStoreId, files =>
             {
                 if (files.Count == 0)
@@ -2381,18 +2378,18 @@ namespace Oxide.Plugins
         {
             var localFileNames = localFiles.Select(f => Path.GetFileName(f)).ToHashSet();
 
-            // Find files to delete (in remote but not in local)
+            
             var toDelete = remoteFiles.Where(kv => !localFileNames.Contains(kv.Key)).ToList();
 
-            // Find files to update (in both local and remote)
+            
             var toUpdate = localFiles.Where(f => remoteFiles.ContainsKey(Path.GetFileName(f))).ToArray();
 
-            // Find files to add (in local but not in remote)
+            
             var toAdd = localFiles.Where(f => !remoteFiles.ContainsKey(Path.GetFileName(f))).ToArray();
 
             Puts($"Sync plan: {toAdd.Length} new, {toUpdate.Length} updated, {toDelete.Count} removed");
 
-            // Track progress
+            
             var totalOps = toDelete.Count + toUpdate.Length + toAdd.Length;
             if (totalOps == 0)
             {
@@ -2413,7 +2410,7 @@ namespace Oxide.Plugins
                 }
             };
 
-            // Delete orphaned files
+            
             foreach (var file in toDelete)
             {
                 DeleteFileFromVectorStore(vectorStoreId, file.Value, vsSuccess =>
@@ -2435,18 +2432,18 @@ namespace Oxide.Plugins
                 });
             }
 
-            // Update existing files (delete old, upload new)
+            
             foreach (var filePath in toUpdate)
             {
                 var fileName = Path.GetFileName(filePath);
                 var oldFileId = remoteFiles[fileName];
 
-                // Delete old version first
+                
                 DeleteFileFromVectorStore(vectorStoreId, oldFileId, vsSuccess =>
                 {
                     DeleteFile(oldFileId, fileSuccess =>
                     {
-                        // Upload new version
+                        
                         UploadFile(filePath, newFileId =>
                         {
                             if (string.IsNullOrEmpty(newFileId))
@@ -2476,7 +2473,7 @@ namespace Oxide.Plugins
                 });
             }
 
-            // Add new files
+            
             UploadNewFiles(toAdd, vectorStoreId, remoteFiles, (succeeded, failedCount) =>
             {
                 completed += succeeded;
@@ -2684,7 +2681,7 @@ namespace Oxide.Plugins
             }
             else
             {
-                // Find player by name or ID
+                
                 var player = BasePlayer.activePlayerList.FirstOrDefault(p =>
                     p.UserIDString == target ||
                     p.displayName.ToLower().Contains(target.ToLower()));
@@ -2722,7 +2719,7 @@ namespace Oxide.Plugins
             Puts($"Requests This Minute: {_globalRequestsThisMinute} / {_config.RateLimits.MaxRequestsPerMinute}");
             Puts($"Last Reset: {_lastDailyReset:yyyy-MM-dd}");
 
-            // Global Chat Bot usage
+            
             if (_config.GlobalBot.Enabled)
             {
                 Puts("\n=== Global Chat Bot ===");
@@ -2743,7 +2740,7 @@ namespace Oxide.Plugins
                 sb.AppendLine($"• Team Contexts: {_teamBotResponseIds.Count} active");
             }
 
-            // Get players with usage
+            
             var playersWithUsage = _sessions
                 .Where(kv => kv.Value.TokensUsedToday > 0 || kv.Value.RequestsToday > 0)
                 .ToList();
@@ -2945,15 +2942,15 @@ namespace Oxide.Plugins
             Puts($"=== Testing Model: {_config.Api.Model} ===");
             Puts("Running capability tests...\n");
 
-            // Test 1: Basic chat
+            
             TestBasicChat(() =>
             {
-                // Test 2: Web search (if enabled)
+                
                 if (_config.Api.EnableWebSearch)
                 {
                     TestWebSearch(() =>
                     {
-                        // Test 3: File search (if configured)
+                        
                         TestFileSearch();
                     });
                 }
@@ -3159,8 +3156,8 @@ namespace Oxide.Plugins
             if (string.IsNullOrEmpty(text))
                 return text;
 
-            // Convert [link text](url) to [link text]
-            // Pattern matches: [any text](any url)
+            
+            
             return Regex.Replace(text, @"\[([^\]]+)\]\([^)]+\)", "[$1]");
         }
 
