@@ -24,6 +24,7 @@ AI assistant plugin for Rust game servers using the OpenAI Responses API. Player
 - [Security Features](#security-features)
 - [Troubleshooting](#troubleshooting)
 - [Changelog](#changelog)
+- [Support](#support)
 
 ---
 
@@ -208,8 +209,7 @@ All commands require admin access. Run from the server console or RCON.
 | Command | Description |
 |---------|-------------|
 | `openai.clearbot [all\|global\|teams]` | Clear bot conversation contexts |
-| `openai.personalities list` | Show all available bot personalities |
-| `openai.personalities reload` | Reload personalities from disk |
+| `openai.personalities` | Show all available bot personalities |
 
 ### Knowledge Base
 
@@ -243,10 +243,7 @@ openai.clearcontext all
 openai.clearbot all
 
 # List available personalities
-openai.personalities list
-
-# Reload personalities after editing files
-openai.personalities reload
+openai.personalities
 
 # Sync knowledge base files
 openai.kb sync
@@ -1581,12 +1578,7 @@ The plugin creates these default personalities on first run:
    on-topic. Don't overdo the accent - just enough flavor to be fun.
    ```
 
-3. Reload personalities:
-   ```
-   openai.personalities reload
-   ```
-
-4. Update config to use the new personality:
+3. Update config to use the new personality:
    ```json
    {
      "Global Chat Bot": {
@@ -1595,7 +1587,7 @@ The plugin creates these default personalities on first run:
    }
    ```
 
-5. Reload the plugin:
+4. Reload the plugin:
    ```
    oxide.reload OpenAI
    ```
@@ -1604,13 +1596,15 @@ The plugin creates these default personalities on first run:
 
 ```bash
 # List all loaded personalities
-openai.personalities list
-
-# Reload personalities from disk (after editing files)
-openai.personalities reload
+openai.personalities
 ```
 
-### Example: openai.personalities list
+To reload personalities after editing files, simply reload the plugin:
+```bash
+oxide.reload OpenAI
+```
+
+### Example: openai.personalities
 
 ```
 === Bot Personalities (5) ===
@@ -2078,3 +2072,4 @@ Remember to disable after troubleshooting to reduce log spam.
 - Added retry with exponential backoff
 - Added Discord rich embeds
 - Improved message chunking
+
