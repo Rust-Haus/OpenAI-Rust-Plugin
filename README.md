@@ -1,4 +1,4 @@
-# OpenAI Plugin v3.4.0
+# OpenAI Plugin v2.0.0
 
 AI assistant plugin for Rust game servers using the OpenAI Responses API. Players can ask questions in-game and receive AI-powered responses.
 
