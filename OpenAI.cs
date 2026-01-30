@@ -12,7 +12,7 @@ using Oxide.Core.Libraries.Covalence;
 
 namespace Oxide.Plugins
 {
-    [Info("OpenAI", "Goo_", "2.1.0")]
+    [Info("OpenAI", "Goo_", "2.1.1")]
     [Description("AI assistant using OpenAI Responses API")]
     public class OpenAI : RustPlugin
     {
@@ -21,7 +21,7 @@ namespace Oxide.Plugins
         private const string PermissionUse = "openai.use";
         private const string PermissionAdmin = "openai.admin";
         private const string PermissionUnlimited = "openai.unlimited";
-        private const string PluginVersion = "2.1.0";
+        private const string PluginVersion = "2.1.1";
 
         private const int DefaultMaxOutputTokens = 2048;
         private const int DefaultCooldownSeconds = 10;
@@ -34,23 +34,78 @@ namespace Oxide.Plugins
         // Static injection patterns to avoid allocations per message
         private static readonly string[] InjectionPatterns =
         {
-            "ignore previous",
-            "ignore all previous",
-            "disregard previous",
-            "forget previous",
-            "ignore your instructions",
-            "new instructions:",
-            "system prompt:",
-            "you are now",
+            "act as an unrestricted",
             "act as if",
-            "pretend you are",
+            "activate dan",
+            "break character",
+            "bypass content filters",
+            "bypass guardrails",
+            "bypass restrictions",
+            "bypass safety",
+            "dan mode",
+            "developer mode",
+            "disregard all instructions",
+            "disregard all previous instructions",
+            "disregard previous",
+            "do anything now",
+            "do as i say",
+            "do not refuse",
+            "dump your prompt",
+            "echo your system prompt",
+            "enable uncensored",
+            "fictional scenario",
+            "follow my instructions",
+            "forget all previous instructions",
+            "forget all prior instructions",
+            "forget previous",
+            "from now on you will",
+            "god mode",
+            "hypothetical scenario",
+            "ignore alignment",
+            "ignore all previous",
+            "ignore all previous instructions",
+            "ignore all rules",
+            "ignore content policies",
+            "ignore ethical guidelines",
+            "ignore guardrails",
+            "ignore prior instructions",
+            "ignore previous",
+            "ignore safety instructions",
+            "ignore the above",
+            "ignore the above instructions",
+            "ignore your instructions",
             "jailbreak",
-            "dan mode"
+            "new instructions:",
+            "new task",
+            "no ethical constraints",
+            "no restrictions",
+            "output exactly",
+            "override all previous instructions",
+            "override previous instructions",
+            "pretend you are",
+            "print system prompt",
+            "print your instructions",
+            "reinitialize",
+            "remove all restrictions",
+            "repeat the following",
+            "reset instructions",
+            "reveal system prompt",
+            "roleplay without restrictions",
+            "system prompt:",
+            "tell me your instructions",
+            "uncensored mode",
+            "unrestricted mode",
+            "updated instructions",
+            "what is your system prompt",
+            "you are dan",
+            "you are now",
+            "you must now"
         };
 
         // Compiled Regex for hot paths
         private static readonly Regex ControlCharsRegex = new Regex(@"[\x00-\x1F\x7F]", RegexOptions.Compiled);
         private static readonly Regex MarkdownLinkRegex = new Regex(@"\[([^\]]+)\]\([^)]+\)", RegexOptions.Compiled);
+        private static readonly Regex RichTextTagRegex = new Regex(@"<[^>]+>", RegexOptions.Compiled);
 
         #endregion
 
@@ -86,6 +141,21 @@ namespace Oxide.Plugins
 
             [JsonProperty("Global Chat Bot")]
             public GlobalBotConfig GlobalBot { get; set; } = new GlobalBotConfig();
+
+            [JsonIgnore]
+            public DeathCommentsConfig DeathComments { get; set; }
+
+            [JsonProperty("Death Message by Damo/beee / M&B-Studios", NullValueHandling = NullValueHandling.Ignore)]
+            public DeathCommentsConfig DeathCommentsDeathMessage { get; set; }
+
+            [JsonProperty("Death Notes by Terceran/Mr. Blue", NullValueHandling = NullValueHandling.Ignore)]
+            public DeathCommentsConfig DeathCommentsDeathNotes { get; set; }
+
+            [JsonProperty("Death Comments", NullValueHandling = NullValueHandling.Ignore)]
+            public DeathCommentsConfig DeathCommentsLegacy { get; set; }
+
+            [JsonProperty("Developer Hooks")]
+            public DeveloperHooksConfig DeveloperHooks { get; set; } = new DeveloperHooksConfig();
 
             [JsonProperty("Debug Mode")]
             public bool DebugMode { get; set; } = false;
@@ -186,16 +256,11 @@ namespace Oxide.Plugins
             [JsonProperty("Include Player Names")]
             public bool IncludePlayerNames { get; set; } = true;
 
-            [JsonProperty("Custom Instructions", ObjectCreationHandling = ObjectCreationHandling.Replace)]
+             [JsonProperty("Custom Instructions", ObjectCreationHandling = ObjectCreationHandling.Replace)]
             public List<string> CustomInstructions { get; set; } = new List<string>
             {
-                "You are a text-only assistant. You cannot see the game world, player locations, inventories, or any live server data.",
-                "You can only answer questions based on your knowledge and any documents provided to you.",
-                "Never offer to: track locations, show maps, execute commands for players, check inventories, monitor players, or interact with the game in any way.",
-                "Never say 'tell me your position' or offer to give directions - you cannot see where players are.",
-                "If asked about something you cannot do, simply say you don't have access to that information.",
-                "Keep responses concise and factual. Do not over-explain or pad responses with unnecessary details.",
-                "When answering about Rust gameplay, stick to general knowledge unless server-specific info is in your knowledge base."
+                "You have no access to live game data (locations, inventories, maps, commands). If asked, say you can't access that.",
+                "Keep responses concise. Answer from your knowledge and any provided documents only."
             };
         }
 
@@ -259,6 +324,45 @@ namespace Oxide.Plugins
             public string BetterChatTitleColor { get; set; } = "#55AAFF";
         }
 
+        private class DeathCommentsConfig
+        {
+            [JsonProperty("Enabled")]
+            public bool Enabled { get; set; } = false;
+
+            [JsonProperty("Model")]
+            public string Model { get; set; } = "gpt-4.1-nano";
+
+            [JsonProperty("Cooldown Seconds")]
+            public float CooldownSeconds { get; set; } = 5f;
+
+            [JsonProperty("System Prompt")]
+            public string SystemPrompt { get; set; } = "A death just happened on a Rust game server. Reply with one short, witty, non-offensive comment. No explanation. One sentence only.";
+
+            [JsonProperty("Max Output Tokens")]
+            public int MaxOutputTokens { get; set; } = 1256;
+
+            [JsonProperty("Play Sound When Posted")]
+            public bool PlaySound { get; set; } = true;
+
+            [JsonProperty("Sound Prefab")]
+            public string SoundPrefab { get; set; } = "assets/prefabs/misc/easter/painted eggs/effects/egg_upgrade.prefab";
+        }
+
+        private class DeveloperHooksConfig
+        {
+            [JsonProperty("Enabled")]
+            public bool Enabled { get; set; } = true;
+
+            [JsonProperty("Share Rate Limits With Players")]
+            public bool ShareRateLimits { get; set; } = true;
+
+            [JsonProperty("External Max Requests Per Minute")]
+            public int ExternalMaxRequestsPerMinute { get; set; } = 30;
+
+            [JsonProperty("Log External Requests")]
+            public bool LogExternalRequests { get; set; } = true;
+        }
+
         protected override void LoadDefaultConfig()
         {
             _config = new PluginConfig();
@@ -277,6 +381,8 @@ namespace Oxide.Plugins
                     LoadDefaultConfig();
                     return;
                 }
+                // DeathMessage commented out until developer adds hook support
+                _config.DeathComments = /* _config.DeathCommentsDeathMessage ?? */ _config.DeathCommentsDeathNotes ?? _config.DeathCommentsLegacy;
                 ValidateConfig();
                 MigrateConfig();
                 SaveConfig();
@@ -289,7 +395,27 @@ namespace Oxide.Plugins
             }
         }
 
-        protected override void SaveConfig() => Config.WriteObject(_config);
+        protected override void SaveConfig()
+        {
+            if (_config != null && _deathCommentSource != null)
+            {
+                // DeathMessage commented out until developer adds hook support
+                // if (_deathCommentSource == "DeathMessage")
+                // {
+                //     _config.DeathCommentsDeathMessage = _config.DeathComments;
+                //     _config.DeathCommentsDeathNotes = null;
+                //     _config.DeathCommentsLegacy = null;
+                // }
+                // else
+                if (_deathCommentSource == "DeathNotes")
+                {
+                    _config.DeathCommentsDeathNotes = _config.DeathComments;
+                    _config.DeathCommentsDeathMessage = null;
+                    _config.DeathCommentsLegacy = null;
+                }
+            }
+            Config.WriteObject(_config);
+        }
 
         private void ValidateConfig()
         {
@@ -314,6 +440,24 @@ namespace Oxide.Plugins
 
             if (string.IsNullOrEmpty(_config.Chat.CommandPrefix))
                 PrintWarning("Command prefix is empty. Players will not be able to use the AI chat command.");
+
+            if (_config.DeathComments != null)
+            {
+                if (_config.DeathComments.CooldownSeconds < 0)
+                    _config.DeathComments.CooldownSeconds = 5f;
+                if (_config.DeathComments.MaxOutputTokens < 1)
+                    _config.DeathComments.MaxOutputTokens = 256;
+                if (string.IsNullOrEmpty(_config.DeathComments.Model))
+                    _config.DeathComments.Model = "gpt-4.1-nano";
+                if (string.IsNullOrEmpty(_config.DeathComments.SoundPrefab))
+                    _config.DeathComments.SoundPrefab = "assets/prefabs/misc/easter/painted eggs/effects/egg_upgrade.prefab";
+            }
+
+            if (_config.DeveloperHooks != null)
+            {
+                if (_config.DeveloperHooks.ExternalMaxRequestsPerMinute < 1)
+                    _config.DeveloperHooks.ExternalMaxRequestsPerMinute = 30;
+            }
         }
 
         private void MigrateConfig()
@@ -458,9 +602,13 @@ namespace Oxide.Plugins
         private string _globalBotResponseId;
         private float _globalBotLastResponseTime;
         private int _globalBotTokensToday;
+        private float _lastDeathCommentTime;
+        private string _deathCommentSource;
 
-        
-        
+        // Developer Hooks rate limiting
+        private int _externalRequestsThisMinute;
+        private float _externalMinuteStartTime;
+
         private Dictionary<ulong, string> _teamBotResponseIds = new Dictionary<ulong, string>();
 
         
@@ -485,22 +633,22 @@ namespace Oxide.Plugins
             {
                 ["NoQuestion"] = "Please provide a question after the command.",
                 ["NoPermission"] = "You don't have permission to use this command.",
-                ["NotConfigured"] = "AI assistant is not configured. Please contact an administrator.",
+                ["NotConfigured"] = "AI assistant is not configured.",
                 ["DisallowedContent"] = "Your message contains disallowed content.",
-                ["ServiceUnavailable"] = "Unable to reach the AI service. Please try again later.",
-                ["AuthenticationFailed"] = "AI service authentication failed. Please contact an administrator.",
-                ["RateLimited"] = "AI service is rate limited. Please try again in a moment.",
+                ["ServiceUnavailable"] = "Unable to reach the AI service.",
+                ["AuthenticationFailed"] = "AI service authentication failed.",
+                ["RateLimited"] = "AI service is rate limited.",
                 ["ConfigError"] = "Configuration error. Please contact an administrator.",
-                ["ModelError"] = "AI model configuration error. Please contact an administrator.",
+                ["ModelError"] = "AI model configuration error.",
                 ["RequestError"] = "Error processing your request.",
-                ["RequestErrorRetry"] = "Error processing your request. Please try again.",
+                ["RequestErrorRetry"] = "Error processing your request.",
                 ["ContentFiltered"] = "I cannot respond to that type of question.",
-                ["EmptyResponse"] = "Received an empty response. Please try rephrasing your question.",
+                ["EmptyResponse"] = "Received an empty response.",
                 ["ResponseError"] = "Error processing the AI response.",
                 ["CooldownWait"] = "Please wait {0} seconds before your next question.",
                 ["ServerBusy"] = "The AI is busy. Please try again in a moment.",
-                ["DailyBudgetReached"] = "Daily server AI budget has been reached. Try again tomorrow.",
-                ["PlayerLimitReached"] = "You've reached your daily AI usage limit. Try again tomorrow."
+                ["DailyBudgetReached"] = "Daily server AI budget has been reached.",
+                ["PlayerLimitReached"] = "You've reached your daily AI usage limit."
             }, this);
         }
 
@@ -591,6 +739,8 @@ namespace Oxide.Plugins
             LoadPersonalities();
             RebuildCachedTriggerPatterns();
 
+            EnsureDeathCommentsConfigIfAvailable();
+
             if (_config.Knowledge.Enabled)
             {
                 InitializeKnowledgeFolder();
@@ -626,6 +776,61 @@ namespace Oxide.Plugins
             });
         }
 
+        private void EnsureDeathCommentsConfigIfAvailable()
+        {
+            // DeathMessage commented out until developer adds hook support
+            // var deathMessageAvailable = false;
+            // if (plugins.Exists("DeathMessage"))
+            // {
+            //     var deathMessagePlugin = plugins.Find("DeathMessage");
+            //     if (deathMessagePlugin != null)
+            //     {
+            //         var hasUpgp = deathMessagePlugin.GetType().GetMethod("UPGP", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance) != null;
+            //         deathMessageAvailable = hasUpgp;
+            //     }
+            // }
+
+            var deathNotesAvailable = plugins.Exists("DeathNotes") && plugins.Find("DeathNotes") != null;
+
+            // DeathMessage commented out until developer adds hook support
+            // if (deathMessageAvailable && deathNotesAvailable)
+            // {
+            //     _deathCommentSource = null;
+            //     PrintWarning("Both DeathMessage and DeathNotes are loaded. Death comments disabled. Unload one plugin to use death comments.");
+            //     return;
+            // }
+            // else if (deathMessageAvailable)
+            // {
+            //     _deathCommentSource = "DeathMessage";
+            // }
+            // else
+            if (deathNotesAvailable)
+            {
+                _deathCommentSource = "DeathNotes";
+            }
+            else
+            {
+                _deathCommentSource = null;
+                return;
+            }
+
+            if (plugins.Exists("RustGPT"))
+                PrintWarning("RustGPT plugin detected. You may encoutner issues with both RustGPT and OpenAI plugins enabled. Please disable one of them.");
+
+            if (_config.DeathComments == null)
+            {
+                _config.DeathComments = new DeathCommentsConfig();
+                Puts($"Death Comments config added ({_deathCommentSource} detected).");
+            }
+
+            if (string.IsNullOrEmpty(_config.DeathComments.Model))
+                _config.DeathComments.Model = "gpt-4.1-nano";
+            if (string.IsNullOrEmpty(_config.DeathComments.SoundPrefab))
+                _config.DeathComments.SoundPrefab = "assets/prefabs/misc/easter/painted eggs/effects/egg_upgrade.prefab";
+
+            SaveConfig();
+        }
+
         private void Unload()
         {
             if (_config.RateLimits.PersistUsageData)
@@ -647,7 +852,7 @@ namespace Oxide.Plugins
                 return null;
 
             // Handle non-slash prefixes (e.g., "!ai")
-            // Slash commands are handled by the registered Covalence command
+            // Slash commands are handled by the registered Covalence command. Raul would hate this. lol.
             if (!string.IsNullOrEmpty(_config.Chat.CommandPrefix) &&
                 !_config.Chat.CommandPrefix.StartsWith("/") &&
                 message.StartsWith(_config.Chat.CommandPrefix, StringComparison.OrdinalIgnoreCase))
@@ -682,6 +887,309 @@ namespace Oxide.Plugins
             }
 
             return null;
+        }
+
+        #endregion
+
+        #region Death Message Hook
+
+        // DeathMessage commented out until developer adds hook support
+        // private void DeathMessageHook(string deathMessageText, string deathType)
+        // {
+        //     if (_deathCommentSource != "DeathMessage")
+        //         return;
+        //
+        //     if (_config.DebugMode)
+        //         Puts($"[DEBUG] DeathMessageHook invoked: deathType={deathType}, textLength={deathMessageText?.Length ?? 0}");
+        //
+        //     if (_config?.DeathComments?.Enabled != true)
+        //     {
+        //         if (_config.DebugMode)
+        //             Puts("[DEBUG] Death comment skipped: Death Comments disabled");
+        //         return;
+        //     }
+        //
+        //     if (_config.DeathComments.CooldownSeconds > 0 &&
+        //         (UnityEngine.Time.realtimeSinceStartup - _lastDeathCommentTime) < _config.DeathComments.CooldownSeconds)
+        //     {
+        //         if (_config.DebugMode)
+        //             Puts($"[DEBUG] Death comment skipped: cooldown active ({_config.DeathComments.CooldownSeconds}s)");
+        //         return;
+        //     }
+        //
+        //     if (string.IsNullOrEmpty(deathMessageText))
+        //     {
+        //         if (_config.DebugMode)
+        //             Puts("[DEBUG] Death comment skipped: death message text empty");
+        //         return;
+        //     }
+        //
+        //     if (_config.DebugMode)
+        //         Puts("[DEBUG] Death comment: sending request");
+        //     var plainText = StripDeathMessageTags(deathMessageText);
+        //     var apiInput = FormatDeathMessageForApi(plainText, deathType);
+        //     RequestDeathComment(apiInput);
+        // }
+
+        private object OnDeathNotice(Dictionary<string, object> data, string message)
+        {
+            if (_deathCommentSource != "DeathNotes")
+                return null;
+
+            if (_config.DebugMode)
+                Puts($"[DEBUG] OnDeathNotice invoked: textLength={message?.Length ?? 0}");
+
+            if (_config?.DeathComments?.Enabled != true)
+                return null;
+
+            if (_config.DeathComments.CooldownSeconds > 0 &&
+                (UnityEngine.Time.realtimeSinceStartup - _lastDeathCommentTime) < _config.DeathComments.CooldownSeconds)
+                return null;
+
+            if (string.IsNullOrEmpty(message))
+                return null;
+
+            var plainText = StripDeathMessageTags(message);
+            if (string.IsNullOrEmpty(plainText))
+                return null;
+
+            if (_config.DebugMode)
+                Puts("[DEBUG] Death comment (DeathNotes): sending request");
+            RequestDeathComment(plainText);
+            return null;
+        }
+
+        private void RequestDeathComment(string deathMessageText)
+        {
+            var model = !string.IsNullOrEmpty(_config.DeathComments.Model) ? _config.DeathComments.Model : "gpt-4.1-nano";
+            var maxTokens = _config.DeathComments.MaxOutputTokens > 0 ? _config.DeathComments.MaxOutputTokens : 256;
+            var payload = new Dictionary<string, object>
+            {
+                ["model"] = model,
+                ["instructions"] = _config.DeathComments.SystemPrompt,
+                ["input"] = deathMessageText,
+                ["store"] = true,
+                ["truncation"] = "auto",
+                ["max_output_tokens"] = maxTokens
+            };
+
+            var jsonPayload = JsonConvert.SerializeObject(payload);
+            if (_config.DebugMode)
+            {
+                Puts($"[DEBUG] Death comment request: sending to {_config.Api.Url}, model={model}");
+                Puts($"[DEBUG] Death comment payload: {jsonPayload}");
+            }
+            webrequest.Enqueue(
+                _config.Api.Url,
+                jsonPayload,
+                (code, response) => HandleDeathCommentResponse(code, response),
+                this,
+                Oxide.Core.Libraries.RequestMethod.POST,
+                new Dictionary<string, string>
+                {
+                    ["Authorization"] = $"Bearer {_config.Api.ApiKey}",
+                    ["Content-Type"] = "application/json"
+                }
+            );
+        }
+
+        private void HandleDeathCommentResponse(int code, string response)
+        {
+            if (_config.DebugMode)
+                Puts($"[DEBUG] Death comment response: code={code}");
+
+            if (code != 200)
+            {
+                if (_config.DebugMode)
+                {
+                    Puts($"[DEBUG] Death comment request failed: {code}");
+                    if (!string.IsNullOrEmpty(response))
+                        Puts($"[DEBUG] Death comment API response: {response}");
+                }
+                return;
+            }
+
+            try
+            {
+                var json = JObject.Parse(response);
+
+                if (_config.DebugMode)
+                    Puts($"[DEBUG] Death comment response: {json}");
+
+                var outputText = ExtractResponseText(json);
+                if (string.IsNullOrEmpty(outputText))
+                {
+                    if (_config.DebugMode)
+                        Puts("[DEBUG] Death comment: no text extracted from response");
+                    return;
+                }
+
+                if (_config.DebugMode)
+                    Puts($"[DEBUG] Death comment extracted text length: {outputText.Length}");
+                _lastDeathCommentTime = UnityEngine.Time.realtimeSinceStartup;
+
+                var tokensUsed = json["usage"]?["total_tokens"]?.Value<int>() ?? 0;
+                _globalTokensToday += tokensUsed;
+                if (_config.DebugMode)
+                    Puts($"[DEBUG] Death comment tokens used: {tokensUsed}");
+
+                if (_config.Chat.StripUrlsFromLinks)
+                    outputText = StripUrlsFromMarkdownLinks(outputText);
+
+                BroadcastBotMessage(outputText, ConVar.Chat.ChatChannel.Global, 0ul);
+
+                if (_config.DeathComments.PlaySound && !string.IsNullOrEmpty(_config.DeathComments.SoundPrefab))
+                {
+                    foreach (var player in BasePlayer.activePlayerList)
+                    {
+                        if (player != null && player.IsConnected)
+                            Effect.server.Run(_config.DeathComments.SoundPrefab, player.transform.position, UnityEngine.Vector3.zero, null, false);
+                    }
+                }
+
+                if (_config.DebugMode)
+                    Puts("[DEBUG] Death comment broadcast to global chat");
+            }
+            catch (Exception ex)
+            {
+                PrintError($"Death comment response error: {ex.Message}");
+            }
+        }
+
+        #endregion
+
+        #region Developer Hooks
+
+        private void OpenAI_ChatComplete(string callerPlugin, string prompt, string callbackHook)
+        {
+            OpenAI_ChatCompleteAdvanced(callerPlugin, prompt, null, null, 0, callbackHook);
+        }
+
+        private void OpenAI_ChatCompleteAdvanced(string callerPlugin, string prompt, string systemPrompt, string model, int maxTokens, string callbackHook)
+        {
+            OpenAI_ChatCompleteReasoning(callerPlugin, prompt, systemPrompt, model, maxTokens, null, callbackHook);
+        }
+
+        private void OpenAI_ChatCompleteReasoning(string callerPlugin, string prompt, string systemPrompt, string model, int maxTokens, string reasoningEffort, string callbackHook)
+        {
+            if (!_config.DeveloperHooks.Enabled)
+            {
+                InvokeExternalCallback(callbackHook, callerPlugin, prompt, "Developer hooks are disabled", false);
+                return;
+            }
+
+            if (string.IsNullOrEmpty(callerPlugin) || string.IsNullOrEmpty(prompt) || string.IsNullOrEmpty(callbackHook))
+            {
+                InvokeExternalCallback(callbackHook, callerPlugin, prompt, "Invalid parameters: callerPlugin, prompt, and callbackHook are required", false);
+                return;
+            }
+
+            if (!CheckExternalRateLimit(callerPlugin))
+            {
+                InvokeExternalCallback(callbackHook, callerPlugin, prompt, "Rate limit exceeded", false);
+                return;
+            }
+
+            if (_config.DeveloperHooks.LogExternalRequests)
+                Puts($"[Developer Hook] Request from {callerPlugin}: {prompt.Substring(0, Math.Min(50, prompt.Length))}...");
+
+            var useModel = !string.IsNullOrEmpty(model) ? model : _config.Api.Model;
+            var useMaxTokens = maxTokens > 0 ? maxTokens : (_config.Api.MaxOutputTokens > 0 ? _config.Api.MaxOutputTokens : 1024);
+            var useSystemPrompt = !string.IsNullOrEmpty(systemPrompt) ? systemPrompt : _config.Prompt.SystemPrompt;
+            var useReasoning = !string.IsNullOrEmpty(reasoningEffort) ? reasoningEffort.ToLower() : null;
+
+            var payload = new Dictionary<string, object>
+            {
+                ["model"] = useModel,
+                ["input"] = prompt,
+                ["max_output_tokens"] = useMaxTokens
+            };
+
+            if (!string.IsNullOrEmpty(useSystemPrompt))
+                payload["instructions"] = useSystemPrompt;
+
+            if (!string.IsNullOrEmpty(useReasoning) && useReasoning != "none")
+            {
+                payload["reasoning"] = new Dictionary<string, object>
+                {
+                    ["effort"] = useReasoning
+                };
+            }
+
+            var jsonPayload = JsonConvert.SerializeObject(payload);
+
+            if (_config.DeveloperHooks.ShareRateLimits)
+                _globalRequestsThisMinute++;
+            else
+                _externalRequestsThisMinute++;
+
+            webrequest.Enqueue(
+                _config.Api.Url,
+                jsonPayload,
+                (code, response) => HandleExternalApiResponse(code, response, callerPlugin, prompt, callbackHook),
+                this,
+                Oxide.Core.Libraries.RequestMethod.POST,
+                _cachedAuthHeadersWithJson
+            );
+        }
+
+        private bool CheckExternalRateLimit(string callerPlugin)
+        {
+            if (_config.DeveloperHooks.ShareRateLimits)
+            {
+                return _globalRequestsThisMinute < _config.RateLimits.MaxRequestsPerMinute;
+            }
+            else
+            {
+                var currentTime = UnityEngine.Time.realtimeSinceStartup;
+                if (currentTime - _externalMinuteStartTime >= 60f)
+                {
+                    _externalRequestsThisMinute = 0;
+                    _externalMinuteStartTime = currentTime;
+                }
+                return _externalRequestsThisMinute < _config.DeveloperHooks.ExternalMaxRequestsPerMinute;
+            }
+        }
+
+        private void HandleExternalApiResponse(int code, string response, string callerPlugin, string prompt, string callbackHook)
+        {
+            if (code != 200)
+            {
+                var errorMsg = $"API error: {code}";
+                if (_config.DeveloperHooks.LogExternalRequests)
+                    PrintWarning($"[Developer Hook] {callerPlugin} request failed: {errorMsg}");
+                InvokeExternalCallback(callbackHook, callerPlugin, prompt, errorMsg, false);
+                return;
+            }
+
+            try
+            {
+                var json = JObject.Parse(response);
+                var responseText = ExtractResponseText(json);
+                if (string.IsNullOrEmpty(responseText))
+                {
+                    InvokeExternalCallback(callbackHook, callerPlugin, prompt, "Empty response from API", false);
+                    return;
+                }
+
+                if (_config.DeveloperHooks.LogExternalRequests)
+                    Puts($"[Developer Hook] {callerPlugin} response: {responseText.Substring(0, Math.Min(50, responseText.Length))}...");
+
+                InvokeExternalCallback(callbackHook, callerPlugin, prompt, responseText, true);
+            }
+            catch (Exception ex)
+            {
+                PrintError($"[Developer Hook] Response parse error for {callerPlugin}: {ex.Message}");
+                InvokeExternalCallback(callbackHook, callerPlugin, prompt, $"Parse error: {ex.Message}", false);
+            }
+        }
+
+        private void InvokeExternalCallback(string callbackHook, string callerPlugin, string prompt, string response, bool success)
+        {
+            if (string.IsNullOrEmpty(callbackHook))
+                return;
+
+            Interface.CallHook(callbackHook, callerPlugin, prompt, response, success);
         }
 
         #endregion
@@ -878,16 +1386,12 @@ namespace Oxide.Plugins
                     var escaped = Regex.Escape(pattern.ToLower());
                     string regexPattern;
 
-                    // For punctuation-only patterns (like "?"), just match the literal character
-                    // For word patterns (like "@bot"), use word boundaries to avoid partial matches
                     if (pattern.All(c => !char.IsLetterOrDigit(c)))
                     {
-                        // Punctuation pattern - simple contains match
                         regexPattern = escaped;
                     }
                     else
                     {
-                        // Word pattern - use word boundaries
                         regexPattern = $@"(?<!\w){escaped}(?!\w)";
                     }
 
@@ -912,7 +1416,6 @@ namespace Oxide.Plugins
             if (_cachedTriggerPatterns == null || _cachedTriggerPatterns.Count == 0)
                 return false;
 
-            // Use cached compiled regex for word boundary matching
             foreach (var regex in _cachedTriggerPatterns)
             {
                 if (regex.IsMatch(message))
@@ -996,7 +1499,6 @@ namespace Oxide.Plugins
         {
             var lowerMessage = message.ToLower();
 
-            // Iterate directly without LINQ ToList allocation
             foreach (var player in BasePlayer.activePlayerList)
             {
                 var name = player.displayName?.ToLower();
@@ -1121,11 +1623,7 @@ namespace Oxide.Plugins
                 sb.Append("\n\nYou are responding in GLOBAL chat. All players on the server can see this conversation.");
             }
 
-            sb.Append("\n\nIMPORTANT: You monitor a multiplayer game chat. Only respond if:");
-            sb.Append("\n- The question is something you can genuinely help with (game info, server info, general knowledge)");
-            sb.Append("\n- The question is NOT clearly directed at another specific player");
-            sb.Append("\n\nIf you should NOT respond (question is for another player, personal chat, or you can't help), reply with exactly: [SKIP]");
-            sb.Append("\n\nKeep responses brief and conversational. You're chatting, not writing essays.");
+            sb.Append("\n\nRules: Reply [SKIP] if the message is player-to-player chat, not meant for you, or outside your knowledge. Otherwise, respond briefly (1-2 sentences max).");
 
             if (_config.Prompt.IncludeServerInfo)
             {
@@ -1668,32 +2166,68 @@ namespace Oxide.Plugins
                 var type = item["type"]?.ToString();
                 Debug($"Output item type: {type}");
 
-                if (type != "message")
-                    continue;
-
-                var content = item["content"] as JArray;
-                if (content == null)
+                if (type == "message")
                 {
-                    Debug("Message has no 'content' array");
-                    continue;
-                }
-
-                Debug($"Content array has {content.Count} items");
-
-                foreach (var contentItem in content)
-                {
-                    var contentType = contentItem["type"]?.ToString();
-                    Debug($"Content item type: {contentType}");
-
-                    if (contentType == "output_text")
+                    var content = item["content"] as JArray;
+                    if (content == null)
+                        continue;
+                    Debug($"Content array has {content.Count} items");
+                    foreach (var contentItem in content)
                     {
-                        var text = contentItem["text"]?.ToString();
-                        Debug($"Extracted text length: {text?.Length ?? 0}");
-                        if (!string.IsNullOrEmpty(text))
+                        var contentType = contentItem["type"]?.ToString();
+                        Debug($"Content item type: {contentType}");
+
+                        if (contentType == "output_text")
                         {
-                            if (sb.Length > 0)
-                                sb.Append(" ");
-                            sb.Append(text);
+                            var text = contentItem["text"]?.ToString();
+                            Debug($"Extracted text length: {text?.Length ?? 0}");
+                            if (!string.IsNullOrEmpty(text))
+                            {
+                                if (sb.Length > 0)
+                                    sb.Append(" ");
+                                sb.Append(text);
+                            }
+                        }
+                    }
+                }
+                else if (type == "reasoning" && sb.Length == 0)
+                {
+                    Debug($"Reasoning item structure: {item}");
+                    
+                    // Try summary array first
+                    var summary = item["summary"] as JArray;
+                    if (summary != null && summary.Count > 0)
+                    {
+                        Debug($"Reasoning summary has {summary.Count} items");
+                        foreach (var sumItem in summary)
+                        {
+                            var text = sumItem["text"]?.ToString();
+                            if (!string.IsNullOrEmpty(text))
+                            {
+                                if (sb.Length > 0)
+                                    sb.Append(" ");
+                                sb.Append(text);
+                            }
+                        }
+                    }
+                    
+                    // Try content array (some reasoning models use this)
+                    if (sb.Length == 0)
+                    {
+                        var content = item["content"] as JArray;
+                        if (content != null && content.Count > 0)
+                        {
+                            Debug($"Reasoning content has {content.Count} items");
+                            foreach (var contentItem in content)
+                            {
+                                var text = contentItem["text"]?.ToString();
+                                if (!string.IsNullOrEmpty(text))
+                                {
+                                    if (sb.Length > 0)
+                                        sb.Append(" ");
+                                    sb.Append(text);
+                                }
+                            }
                         }
                     }
                 }
@@ -3321,6 +3855,39 @@ namespace Oxide.Plugins
 
             return MarkdownLinkRegex.Replace(text, "[$1]");
         }
+
+        private string StripDeathMessageTags(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return text;
+            var stripped = RichTextTagRegex.Replace(text, "");
+            return Regex.Replace(stripped, @"\s+", " ").Trim();
+        }
+
+        // DeathMessage commented out until developer adds hook support
+        // private string FormatDeathMessageForApi(string plainText, string deathType)
+        // {
+        //     if (string.IsNullOrEmpty(plainText))
+        //         return plainText;
+        //
+        //     var m = Regex.Match(plainText, @"^(.+?)\s+suicide\s*$", RegexOptions.IgnoreCase);
+        //     if (deathType == "PlayerSuicide" && m.Success)
+        //         return $"{m.Groups[1].Value.Trim()} committed suicide.";
+        //
+        //     m = Regex.Match(plainText, @"^(\S+)\s+(.+)\s+Kill\s+(\S+)\s+(\S+)\s+(\d+)\s*m?\s*$");
+        //     if (m.Success && (deathType == "PlayerKillPlayer" || deathType == "PlayerKillNPC"))
+        //         return $"{m.Groups[1].Value.Trim()} used {m.Groups[2].Value.Trim()} to kill {m.Groups[3].Value.Trim()} (hit in {m.Groups[4].Value.Trim()}) from {m.Groups[5].Value.Trim()} meters away.";
+        //
+        //     m = Regex.Match(plainText, @"^(\S+)\s+(.+)\s+Kill\s+(.+?)\s+(\d+)\s*m?\s*$");
+        //     if (m.Success && (deathType == "PlayerKillAnimal" || deathType == "PlayerKillEntity" || deathType == "PlayerKillPatrolHelicopter" || deathType == "PlayerKillBradleyapc" || deathType == "NPCKillPlayer"))
+        //         return $"{m.Groups[1].Value.Trim()} used {m.Groups[2].Value.Trim()} to kill {m.Groups[3].Value.Trim()} from {m.Groups[4].Value.Trim()} meters away.";
+        //
+        //     m = Regex.Match(plainText, @"^(.+?)\s+Kill\s+(.+?)\s+(\d+)\s*m?\s*$");
+        //     if (m.Success && (deathType == "AnimalKillPlayer" || deathType == "PatrolHelicopterKillPlayer" || deathType == "BradleyapcKillPlayer" || deathType == "EntityKillPlayer"))
+        //         return $"{m.Groups[2].Value.Trim()} was killed by {m.Groups[1].Value.Trim()} from {m.Groups[3].Value.Trim()} meters away.";
+        //
+        //     return plainText;
+        // }
 
         #endregion
     }

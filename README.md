@@ -1,4 +1,4 @@
-# OpenAI Plugin v2.1.0
+# OpenAI Plugin v2.1.1
 
 AI assistant plugin for Rust game servers using the OpenAI Responses API. Players can ask questions in-game and receive AI-powered responses.
 
@@ -14,6 +14,8 @@ AI assistant plugin for Rust game servers using the OpenAI Responses API. Player
 - [Player Usage](#player-usage)
 - [Console Commands](#console-commands)
 - [Configuration Reference](#configuration-reference)
+- [Death Notes Integration](#death-notes-integration)
+- [Developer Hooks](#developer-hooks)
 - [Global Chat Bot](#global-chat-bot)
 - [BetterChat Integration](#betterchat-integration)
 - [Bot Personalities](#bot-personalities)
@@ -92,7 +94,7 @@ Edit `oxide/configs/OpenAI.json`:
 {
   "API Settings": {
     "API Key": "sk-your-api-key-here",
-    "Model": "gpt-4o-mini"
+    "Model": "gpt-5-nano"
   }
 }
 ```
@@ -276,7 +278,7 @@ Below is the complete default configuration with detailed explanations for each 
 
 ```json
 {
-  "Config Version": "3.4.0",
+  "Config Version": "2.1.1",
   "API Settings": {
     "API Key": "",
     "API URL": "https://api.openai.com/v1/responses",
@@ -315,13 +317,8 @@ Below is the complete default configuration with detailed explanations for each 
     "Include Server Info": true,
     "Include Player Names": true,
     "Custom Instructions": [
-      "You are a text-only assistant. You cannot see the game world, player locations, inventories, or any live server data.",
-      "You can only answer questions based on your knowledge and any documents provided to you.",
-      "Never offer to: track locations, show maps, execute commands for players, check inventories, monitor players, or interact with the game in any way.",
-      "Never say 'tell me your position' or offer to give directions - you cannot see where players are.",
-      "If asked about something you cannot do, simply say you don't have access to that information.",
-      "Keep responses concise and factual. Do not over-explain or pad responses with unnecessary details.",
-      "When answering about Rust gameplay, stick to general knowledge unless server-specific info is in your knowledge base."
+      "You have no access to live game data (locations, inventories, maps, commands). If asked, say you can't access that.",
+      "Keep responses concise. Answer from your knowledge and any provided documents only."
     ]
   },
   "Knowledge Base": {
@@ -346,6 +343,21 @@ Below is the complete default configuration with detailed explanations for each 
     "Better Chat Title": "[AI]",
     "Better Chat Title Color": "#55AAFF"
   },
+  "Death Notes by Terceran/Mr. Blue": {
+    "Enabled": false,
+    "Model": "gpt-4.1-nano",
+    "Cooldown Seconds": 5.0,
+    "System Prompt": "A death just happened on a Rust game server. Reply with one short, witty, non-offensive comment. No explanation. One sentence only.",
+    "Max Output Tokens": 1256,
+    "Play Sound When Posted": true,
+    "Sound Prefab": "assets/prefabs/misc/easter/painted eggs/effects/egg_upgrade.prefab"
+  },
+  "Developer Hooks": {
+    "Enabled": true,
+    "Share Rate Limits With Players": true,
+    "External Max Requests Per Minute": 30,
+    "Log External Requests": true
+  },
   "Debug Mode": false
 }
 ```
@@ -355,7 +367,7 @@ Below is the complete default configuration with detailed explanations for each 
 ### Config Version
 
 ```json
-"Config Version": "3.4.0"
+"Config Version": "2.1.1"
 ```
 
 **Purpose:** Tracks the plugin version that last saved this config file.
@@ -1340,6 +1352,133 @@ See [BetterChat Integration](#betterchat-integration) for details.
 
 ---
 
+### Death Notes Integration
+
+```json
+"Death Notes by Terceran/Mr. Blue": {
+  "Enabled": false,
+  "Model": "gpt-4.1-nano",
+  "Cooldown Seconds": 5.0,
+  "System Prompt": "A death just happened on a Rust game server. Reply with one short, witty, non-offensive comment. No explanation. One sentence only.",
+  "Max Output Tokens": 1256,
+  "Play Sound When Posted": true,
+  "Sound Prefab": "assets/prefabs/misc/easter/painted eggs/effects/egg_upgrade.prefab"
+}
+```
+
+**Purpose:** Integrates with the Death Notes plugin by Terceran/Mr. Blue to generate AI-powered witty comments when players die.
+
+**Note:** This section only appears in your config if the Death Notes plugin is installed and detected. The config key may also appear as `"Death Comments"` for legacy compatibility.
+
+#### Enabled
+
+**Purpose:** Turn Death Notes AI comments on or off.
+
+**Default:** `false`
+
+**When to enable:** When you have the Death Notes plugin installed and want AI-generated death comments.
+
+#### Model
+
+**Purpose:** Which AI model to use for death comments.
+
+**Default:** `gpt-4.1-nano`
+
+**Why it exists:** Death comments should be fast and cheap. A smaller model is ideal since they only need one short sentence.
+
+#### Cooldown Seconds
+
+**Purpose:** Minimum time between death comments.
+
+**Default:** `5.0` seconds
+
+**Why it exists:** Prevents spam during intense battles with many deaths in quick succession.
+
+#### System Prompt
+
+**Purpose:** Instructions for the AI on how to generate death comments.
+
+**Default:** `"A death just happened on a Rust game server. Reply with one short, witty, non-offensive comment. No explanation. One sentence only."`
+
+**Customization:** Edit this to change the tone (funny, serious, sarcastic, etc.).
+
+#### Max Output Tokens
+
+**Purpose:** Maximum tokens for the death comment response.
+
+**Default:** `1256`
+
+**Why it exists:** Limits response length. For single-sentence comments, this is more than enough.
+
+#### Play Sound When Posted
+
+**Purpose:** Play a sound effect when a death comment is posted.
+
+**Default:** `true`
+
+**Why it exists:** Adds audio feedback to draw attention to the AI comment.
+
+#### Sound Prefab
+
+**Purpose:** The sound effect to play.
+
+**Default:** `"assets/prefabs/misc/easter/painted eggs/effects/egg_upgrade.prefab"`
+
+**Why it exists:** Allows customization of the notification sound. Must be a valid Rust sound prefab path.
+
+---
+
+### Developer Hooks
+
+```json
+"Developer Hooks": {
+  "Enabled": true,
+  "Share Rate Limits With Players": true,
+  "External Max Requests Per Minute": 30,
+  "Log External Requests": true
+}
+```
+
+**Purpose:** Allows other Oxide plugins to use this plugin's OpenAI connection via hook calls, without needing their own API keys.
+
+**For plugin developers:** See `DEV-HOOKS-README.md` for complete hook documentation and examples.
+
+#### Enabled
+
+**Purpose:** Turn developer hooks on or off.
+
+**Default:** `true`
+
+**Why it exists:** Allows server admins to control whether other plugins can make AI requests through this plugin.
+
+#### Share Rate Limits With Players
+
+**Purpose:** Whether external plugin requests count toward the same rate limits as player requests.
+
+**Default:** `true`
+
+**Why it exists:** 
+- `true`: External requests and player requests share the same pool (simpler, but plugins compete with players)
+- `false`: External requests have their own separate rate limit pool
+
+#### External Max Requests Per Minute
+
+**Purpose:** Rate limit for external plugin requests (only used when not sharing limits).
+
+**Default:** `30`
+
+**Why it exists:** Prevents runaway plugins from exhausting your API quota. Only applies when `Share Rate Limits With Players` is `false`.
+
+#### Log External Requests
+
+**Purpose:** Log all external plugin requests to the console.
+
+**Default:** `true`
+
+**Why it exists:** Helps debug issues with external plugins and monitor their usage.
+
+---
+
 ### Debug Mode
 
 ```json
@@ -1848,6 +1987,7 @@ openai.resetusage
 | "API authentication failed" | API key is invalid | Check your API key is correct and not expired |
 | "Model 'X' is not available" | Model not accessible | Run `openai.models` to see available models |
 | "Reasoning effort 'X' not valid for model" | Wrong reasoning config | Match reasoning effort to model type |
+| "Results may be suboptimal: Web Search is enabled with low reasoning effort..." | Web search + low reasoning | Set Reasoning Effort to `low`, `medium`, or `high` for better web search results, or disable Web Search |
 | "Failed to create vector store" | Knowledge base issue | Check API key has vector store permissions |
 | "Configured personality 'X' not found" | Missing personality file | Create the file or use an existing preset |
 
@@ -2024,9 +2164,13 @@ Remember to disable after troubleshooting to reduce log spam.
 
 ## Changelog
 
+### v2.1.1
+  - **Config version:** Aligned config version to 2.1.1.
+  - **Setup validation:** Added a warning when Web Search is enabled with low reasoning effort (`none` or `minimal`). The plugin now shows: *"Results may be suboptimal: Web Search is enabled with low reasoning effort (none or minimal). Consider increasing reasoning effort for better web search results."* This helps avoid poor web search quality when reasoning is turned down.
+
 ### v2.1.0
   - Multi-Language Support (Localization)
-  - Improved Trigger Pattern Detection" Fixed trigger patterns not matching when followed by punctuation or special characters at the start of messages with `@` prefix.
+  - Improved Trigger Pattern Detection: Fixed trigger patterns not matching when followed by punctuation or special characters at the start of messages with `@` prefix.
   - Custom Command Registration (Slash Commands): You can now use slash-style commands like `/askai` instead of chat prefixes like `!ai`.
 
 **Configuration example:**
@@ -2037,5 +2181,5 @@ Remember to disable after troubleshooting to reduce log spam.
   }
 }
 ```
- 
+
 
