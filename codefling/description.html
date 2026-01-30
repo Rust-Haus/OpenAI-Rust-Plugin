@@ -1,19 +1,117 @@
 <p>
-	AI assistant plugin for Rust game servers using the OpenAI Responses API. Players can ask questions in-game and receive AI-powered responses.
+	AI assistant plugin for Rust game servers using the OpenAI Responses API. Players can ask questions in-game via a chat command (default: <strong>!ai</strong>) and receive AI-generated responses. Supports conversation context, a custom knowledge base for server-specific documents, multi-tier rate limiting, and optional integrations like Discord webhooks and BetterChat.
 </p>
 
 <p>
-	<span style="font-size:24px;"><a href="https://github.com/Rust-Haus/OpenAI-Rust-Plugin/blob/main/README.md" rel="external nofollow">Full Documentation Here</a></span><br>
+	<span style="font-size:24px;"><a href="https://github.com/Rust-Haus/OpenAI-Rust-Plugin/blob/main/README.md" rel="external nofollow">Full Documentation Here</a></span>
 </p>
 
-<p>
+<table style="border-spacing:50px;width:900px;">
+	<tbody>
+		<tr>
+			<td style="vertical-align:top;padding-right:50px;width:200px;">
+				<p>
+					<span style="font-size:16px;"><span style="color:#3366ff;"><strong>Features</strong></span></span>
+				</p>
+				<p>
+					Chat command trigger<br>
+					Conversation context<br>
+					Knowledge base (vector store)<br>
+					Customizable personalities<br>
+					Prompt injection filtering<br>
+					Message chunking
+				</p>
+			</td>
+			<td style="vertical-align:top;padding-right:50px;width:200px;">
+				<p>
+					<span style="font-size:16px;"><span style="color:#3366ff;"><strong>Chat / Bot</strong></span></span>
+				</p>
+				<p>
+					Configurable command prefix<br>
+					Global Chat Bot mode<br>
+					BetterChat integration<br>
+					Custom response colors<br>
+					Personality presets<br>
+					Team chat monitoring
+				</p>
+			</td>
+			<td style="vertical-align:top;padding-right:50px;width:200px;">
+				<p>
+					<span style="font-size:16px;"><span style="color:#3366ff;"><strong>Rate Limits</strong></span></span>
+				</p>
+				<p>
+					Per-player cooldowns<br>
+					Requests per minute cap<br>
+					Daily token budgets<br>
+					Per-player token limits<br>
+					Persistent usage tracking
+				</p>
+			</td>
+			<td style="vertical-align:top;width:200px;">
+				<p>
+					<span style="font-size:16px;"><span style="color:#3366ff;"><strong>Integrations</strong></span></span>
+				</p>
+				<p>
+					Discord webhook logging<br>
+					Optional web search<br>
+					Death Notes support<br>
+					Developer hooks API<br>
+					Reasoning model support
+				</p>
+			</td>
+		</tr>
+	</tbody>
+</table>
+
+<p style="text-align:center;">
+	<span style="font-size:24px;"><em><strong>Config Excerpt</strong></em></span>
 </p>
+
+<div class="ipsSpoiler" data-ipsspoiler="">
+	<div class="ipsSpoiler_header">
+		<span>Default Config</span>
+	</div>
+	<div class="ipsSpoiler_contents">
+<pre class="ipsCode prettyprint lang-javascript">{
+  "Config Version": "2.1.1",
+  "API Settings": {
+    "API Key": "",
+    "API URL": "https://api.openai.com/v1/responses",
+    "Model": "gpt-5-nano",
+    "Max Output Tokens (0 = model default)": 2048,
+    "Reasoning Effort (none/minimal/low/medium/high)": "low",
+    "Enable Web Search": false,
+    "Retry Attempts": 3
+  },
+  "Rate Limits": {
+    "Cooldown Seconds": 10,
+    "Max Requests Per Minute": 30,
+    "Daily Token Budget": 500000,
+    "Per Player Daily Token Limit": 15000,
+    "Persist Usage Data": true
+  },
+  "Chat Settings": {
+    "Command Prefix": "!ai",
+    "Response Prefix": "[AI]",
+    "Response Color": "#55AAFF",
+    "Message Color": "#FFFFFF",
+    "Font Size": 12,
+    "Max Message Chunk Size": 450,
+    "Strip URLs from Links": true
+  }
+}</pre>
+		<p>
+			See full configuration options in the documentation.
+		</p>
+	</div>
+</div>
 
 <div class="ipsEmbeddedVideo" contenteditable="false">
 	<div>
-		<iframe allowfullscreen="" frameborder="0" height="113" title="OpenAI Rust plugin knowledge files" width="200" src="https://www.youtube-nocookie.com/embed/p6wGswXvjXE?feature=oembed"></iframe>
+		<iframe allowfullscreen="" frameborder="0" height="315" width="560" title="OpenAI Rust plugin knowledge files" src="https://www.youtube-nocookie.com/embed/p6wGswXvjXE?feature=oembed"></iframe>
 	</div>
 </div>
 
 <p>
+	<img alt="AI assistant demo" title="AI assistant demo" width="200" src="https://media3.giphy.com/media/v1.Y2lkPWNkNzllNDM2NmxraWwyNzFkOHMwY2duYjRjbm16a3UwbTBreWFncnc2amF0Ynp1cSZlcD12MV9naWZzX3NlYXJjaCZjdD1n/f0VbswUmSY6X1cBz4C/200.gif">
 </p>

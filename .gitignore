@@ -1,5 +1,11 @@
 # Ignore everything except the files below
 /*
+
+# Explicitly ignore sensitive files (never commit these)
+.env
+.env.*
+
+# Allowed files and folders
 !.gitignore
 !OpenAI.cs
 !README.md
