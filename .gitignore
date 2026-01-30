@@ -1,0 +1,9 @@
+# Ignore everything except the files below
+/*
+!.gitignore
+!OpenAI.cs
+!README.md
+!.github/
+!.github/**
+!codefling/
+!codefling/**

@@ -1,0 +1,70 @@
+# Sync OpenAI.cs and Codefling description/changelog to Codefling.
+# Upload only runs when repository variable CODEFLING_UPLOAD_ENABLED is set to 'true'.
+# Until then, the workflow runs in dry-run mode (parse version, read files, skip API call).
+
+name: Codefling Sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "OpenAI.cs"
+      - "codefling/description.html"
+      - "codefling/changelog.html"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse version from OpenAI.cs
+        id: parse
+        run: |
+          VERSION=$(grep 'Info("OpenAI"' OpenAI.cs | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)"\).*/\1/' | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not parse version from OpenAI.cs"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Parsed version: $VERSION"
+
+      - name: Validate Codefling files
+        run: |
+          test -f codefling/description.html || { echo "::error::codefling/description.html missing"; exit 1; }
+          test -f codefling/changelog.html || { echo "::error::codefling/changelog.html missing"; exit 1; }
+          echo "Description and changelog files present"
+
+      - name: Upload to Codefling
+        if: vars.CODEFLING_UPLOAD_ENABLED == 'true'
+        env:
+          CODEFLING_FILE_ID: ${{ secrets.CODEFLING_FILE_ID }}
+          CODEFLING_CREATOR_API_KEY: ${{ secrets.CODEFLING_CREATOR_API_KEY }}
+          VERSION: ${{ steps.parse.outputs.version }}
+        run: |
+          if [ -z "$CODEFLING_FILE_ID" ] || [ -z "$CODEFLING_CREATOR_API_KEY" ]; then
+            echo "::error::CODEFLING_FILE_ID or CODEFLING_CREATOR_API_KEY secret is missing"
+            exit 1
+          fi
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://codefling.com/api/downloads/files/${CODEFLING_FILE_ID}/history" \
+            -H "Authorization: Bearer ${CODEFLING_CREATOR_API_KEY}" \
+            --data-urlencode "version=${VERSION}" \
+            --data-urlencode "save=1" \
+            --data-urlencode "description@codefling/description.html" \
+            --data-urlencode "changelog@codefling/changelog.html" \
+            --data-urlencode "files[OpenAI.cs]@OpenAI.cs")
+          HTTP_BODY=$(echo "$RESPONSE" | head -n -1)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::error::Codefling API error (HTTP $HTTP_CODE): $HTTP_BODY"
+            exit 1
+          fi
+          echo "Codefling updated successfully (HTTP $HTTP_CODE)"
+
+      - name: Skip upload (dry run)
+        if: vars.CODEFLING_UPLOAD_ENABLED != 'true'
+        run: |
+          echo "Parsed version: ${{ steps.parse.outputs.version }}"
+          echo "Upload skipped. To enable pushing to Codefling, set repository variable CODEFLING_UPLOAD_ENABLED to 'true' (Settings → Secrets and variables → Actions → Variables)."
