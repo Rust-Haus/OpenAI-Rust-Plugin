@@ -21,23 +21,19 @@ From the docs:
 - **Parameter:** `screenshots` (object) – "Will **replace** all current screenshots."
 - **Exception:** `1S303/N` **NO_SS** – "No screenshots are provided, but **screenshots are required for the category**."
 
-So for the **Plugins** category, every `POST .../history` request (every new version upload) **must** include a `screenshots` object. The API does **not** support "upload new version and keep existing screenshots." If you omit screenshots, the server returns NO_SS (and HTTP 401 in our case).
+For the **Plugins** category, every `POST .../history` request (every new version upload) **must** include a `screenshots` object. The API does **not** support "upload new version and keep existing screenshots." If you omit screenshots, the server returns NO_SS (and HTTP 401).
 
-So we are doing a **replacement** when we call history: we send the new file + description + changelog, and for this category we must also send screenshots (which replace the current set). There is no "edit in place" for the downloadable file that leaves screenshots unchanged.
+## Current approach
 
-## Options from here
+**Edit endpoint for description updates** – The workflow uses `POST /api/downloads/files/{id}` to sync `codefling/description.html`. This avoids the NO_SS error since the Edit endpoint doesn't require screenshots.
 
-1. **Two-step workflow (no screenshots in repo)**  
-   - **Edit** – update description (and title/tags if needed) from `codefling/description.html`.  
-   - New .cs releases – do **manually** on Codefling (upload new version + re-add screenshots there).  
-   - Changelog is only on the listing via Edit if we can put it in the description; the Edit endpoint has no dedicated changelog field.
+**Manual releases for new .cs versions** – New plugin file uploads must be done manually on Codefling (which requires screenshots). The History endpoint cannot be automated without including screenshots in the repo.
 
-2. **Single-step workflow (screenshots in repo)**  
-   - Store the same screenshots you want on the listing in the repo (e.g. `codefling/screenshots/`).  
-   - On each push that updates the plugin, call **History** with: new .cs file + description + changelog + those screenshots.  
-   - Each upload **replaces** the listing’s screenshots with the ones from the repo (same images = same result, but sent every time to satisfy NO_SS).
+## Required secrets
 
-3. **Ask Codefling**  
-   - Confirm whether the Plugins category can be configured to not require screenshots on history, or if there is another way to publish a new version without re-sending screenshots.
+| Secret | Purpose |
+|--------|---------|
+| `CODEFLING_FILE_ID` | The numeric ID of the Codefling listing |
+| `CODEFLING_CREATOR_API_KEY` | Your Codefling Creator API key |
 
-Until we choose one of these (or get different guidance from Codefling), the workflow will keep hitting **NO_SS** when it calls `POST .../history` without a `screenshots` parameter.
+The category ID (`2` for mods) is hardcoded in the workflow.

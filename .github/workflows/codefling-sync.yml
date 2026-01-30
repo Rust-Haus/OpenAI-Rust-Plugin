@@ -1,4 +1,6 @@
-# Sync OpenAI.cs and Codefling description/changelog to Codefling.
+# Sync Codefling description metadata.
+# Note: This workflow updates description only (Edit endpoint).
+# New .cs file releases must be done manually on Codefling (requires screenshots).
 
 name: Codefling Sync
 
@@ -6,9 +8,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "OpenAI.cs"
       - "codefling/description.html"
-      - "codefling/changelog.html"
 
 jobs:
   sync:
@@ -17,45 +17,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Parse version from OpenAI.cs
-        id: parse
-        run: |
-          VERSION=$(grep 'Info("OpenAI"' OpenAI.cs | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)"\).*/\1/' | head -1)
-          if [ -z "$VERSION" ]; then
-            echo "::error::Could not parse version from OpenAI.cs"
-            exit 1
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Parsed version: $VERSION"
-
-      - name: Validate Codefling files
+      - name: Validate description file
         run: |
           test -f codefling/description.html || { echo "::error::codefling/description.html missing"; exit 1; }
-          test -f codefling/changelog.html || { echo "::error::codefling/changelog.html missing"; exit 1; }
-          echo "Description and changelog files present"
+          echo "Description file present"
 
-      - name: Upload to Codefling
+      - name: Update Codefling description
         env:
           CODEFLING_FILE_ID: ${{ secrets.CODEFLING_FILE_ID }}
           CODEFLING_CREATOR_API_KEY: ${{ secrets.CODEFLING_CREATOR_API_KEY }}
-          VERSION: ${{ steps.parse.outputs.version }}
         run: |
           if [ -z "$CODEFLING_FILE_ID" ] || [ -z "$CODEFLING_CREATOR_API_KEY" ]; then
-            echo "::error::CODEFLING_FILE_ID or CODEFLING_CREATOR_API_KEY secret is missing"
+            echo "::error::Missing required secret: CODEFLING_FILE_ID or CODEFLING_CREATOR_API_KEY"
             exit 1
           fi
+          
+          DESCRIPTION=$(cat codefling/description.html)
+          
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-            "https://codefling.com/api/downloads/files/${CODEFLING_FILE_ID}/history" \
+            "https://codefling.com/api/downloads/files/${CODEFLING_FILE_ID}" \
             -H "Authorization: Bearer ${CODEFLING_CREATOR_API_KEY}" \
-            --data-urlencode "version=${VERSION}" \
-            --data-urlencode "save=1" \
-            --data-urlencode "description@codefling/description.html" \
-            --data-urlencode "changelog@codefling/changelog.html" \
-            --data-urlencode "files[OpenAI.cs]@OpenAI.cs")
+            --data-urlencode "category=2" \
+            --data-urlencode "description=${DESCRIPTION}")
+          
           HTTP_BODY=$(echo "$RESPONSE" | head -n -1)
           HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
+          
           if [ "$HTTP_CODE" -ge 400 ]; then
             echo "::error::Codefling API error (HTTP $HTTP_CODE): $HTTP_BODY"
             exit 1
           fi
-          echo "Codefling updated successfully (HTTP $HTTP_CODE)"
+          echo "Codefling description updated successfully (HTTP $HTTP_CODE)"
