@@ -1,6 +1,4 @@
 # Sync OpenAI.cs and Codefling description/changelog to Codefling.
-# Upload only runs when repository variable CODEFLING_UPLOAD_ENABLED is set to 'true'.
-# Until then, the workflow runs in dry-run mode (parse version, read files, skip API call).
 
 name: Codefling Sync
 
@@ -37,7 +35,6 @@ jobs:
           echo "Description and changelog files present"
 
       - name: Upload to Codefling
-        if: vars.CODEFLING_UPLOAD_ENABLED == 'true'
         env:
           CODEFLING_FILE_ID: ${{ secrets.CODEFLING_FILE_ID }}
           CODEFLING_CREATOR_API_KEY: ${{ secrets.CODEFLING_CREATOR_API_KEY }}
@@ -62,9 +59,3 @@ jobs:
             exit 1
           fi
           echo "Codefling updated successfully (HTTP $HTTP_CODE)"
-
-      - name: Skip upload (dry run)
-        if: vars.CODEFLING_UPLOAD_ENABLED != 'true'
-        run: |
-          echo "Parsed version: ${{ steps.parse.outputs.version }}"
-          echo "Upload skipped. To enable pushing to Codefling, set repository variable CODEFLING_UPLOAD_ENABLED to 'true' (Settings → Secrets and variables → Actions → Variables)."
