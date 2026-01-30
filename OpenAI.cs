@@ -31,7 +31,6 @@ namespace Oxide.Plugins
         private const int DefaultMaxInputLength = 500;
         private const int DefaultMaxChunkSize = 450;
 
-        // Static injection patterns to avoid allocations per message
         private static readonly string[] InjectionPatterns =
         {
             "act as an unrestricted",
