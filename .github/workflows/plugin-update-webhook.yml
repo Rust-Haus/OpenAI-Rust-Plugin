@@ -1,0 +1,36 @@
+# Notify external webhook when the repo is pushed to GitHub.
+
+name: Plugin Update Webhook
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify webhook of update
+        env:
+          PLUGIN_UPDATE_WEBHOOK: ${{ secrets.PLUGIN_UPDATE_WEBHOOK }}
+        run: |
+          if [ -z "$PLUGIN_UPDATE_WEBHOOK" ]; then
+            echo "::warning::PLUGIN_UPDATE_WEBHOOK secret not set, skipping notification"
+            exit 0
+          fi
+          PAYLOAD=$(jq -n \
+            --arg repo "${{ github.repository }}" \
+            --arg ref "${{ github.ref }}" \
+            --arg sha "${{ github.sha }}" \
+            --arg actor "${{ github.actor }}" \
+            --arg run_id "${{ github.run_id }}" \
+            '{event: "push", message: "Plugin repository was updated", repository: $repo, ref: $ref, sha: $sha, actor: $actor, run_id: $run_id}')
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            "$PLUGIN_UPDATE_WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::warning::Webhook returned HTTP $HTTP_CODE"
+          else
+            echo "Webhook notified successfully (HTTP $HTTP_CODE)"
+          fi
