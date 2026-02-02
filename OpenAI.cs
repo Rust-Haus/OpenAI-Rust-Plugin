@@ -9,19 +9,21 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Oxide.Core;
 using Oxide.Core.Libraries.Covalence;
+using Oxide.Core.Plugins;
 
 namespace Oxide.Plugins
 {
-    [Info("OpenAI", "Goo_", "2.1.1")]
+    [Info("OpenAI", "Goo_", PluginVersion)]
     [Description("AI assistant using OpenAI Responses API")]
     public class OpenAI : RustPlugin
     {
         #region Constants
 
+
         private const string PermissionUse = "openai.use";
         private const string PermissionAdmin = "openai.admin";
         private const string PermissionUnlimited = "openai.unlimited";
-        private const string PluginVersion = "2.1.1";
+        private const string PluginVersion = "2.2.0";
 
         private const int DefaultMaxOutputTokens = 2048;
         private const int DefaultCooldownSeconds = 10;
@@ -101,6 +103,8 @@ namespace Oxide.Plugins
             "you must now"
         };
 
+        private static readonly HashSet<string> ValidReasoningEfforts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "none", "minimal", "low", "medium", "high" };
+
         // Compiled Regex for hot paths
         private static readonly Regex ControlCharsRegex = new Regex(@"[\x00-\x1F\x7F]", RegexOptions.Compiled);
         private static readonly Regex MarkdownLinkRegex = new Regex(@"\[([^\]]+)\]\([^)]+\)", RegexOptions.Compiled);
@@ -156,6 +160,12 @@ namespace Oxide.Plugins
             [JsonProperty("Developer Hooks")]
             public DeveloperHooksConfig DeveloperHooks { get; set; } = new DeveloperHooksConfig();
 
+            [JsonProperty("VIP Tier Order", ObjectCreationHandling = ObjectCreationHandling.Replace)]
+            public List<string> VIPTierOrder { get; set; } = new List<string>();
+
+            [JsonProperty("VIP Tiers", ObjectCreationHandling = ObjectCreationHandling.Replace)]
+            public Dictionary<string, VIPTierConfig> VIPTiers { get; set; } = new Dictionary<string, VIPTierConfig>();
+
             [JsonProperty("Debug Mode")]
             public bool DebugMode { get; set; } = false;
         }
@@ -205,7 +215,7 @@ namespace Oxide.Plugins
         private class ChatConfig
         {
             [JsonProperty("Command Prefix")]
-            public string CommandPrefix { get; set; } = "!ai";
+            public string CommandPrefix { get; set; } = "/ai";
 
             [JsonProperty("Response Prefix")]
             public string ResponsePrefix { get; set; } = "[AI]";
@@ -247,7 +257,7 @@ namespace Oxide.Plugins
         private class PromptConfig
         {
             [JsonProperty("System Prompt")]
-            public string SystemPrompt { get; set; } = "You are a helpful assistant on a Rust game server. Keep responses concise and relevant to the game Rust by Facepunch Studios and this server specifically.";
+            public string SystemPrompt { get; set; } = "You are a chat bot for a Rust game server. You answer players questions. Do not discuss topics outside this server or the game Rust.";
 
             [JsonProperty("Include Server Info")]
             public bool IncludeServerInfo { get; set; } = true;
@@ -266,7 +276,7 @@ namespace Oxide.Plugins
         private class KnowledgeConfig
         {
             [JsonProperty("Enable Knowledge Base")]
-            public bool Enabled { get; set; } = false;
+            public bool Enabled { get; set; } = true;
 
             [JsonProperty("Vector Store ID")]
             public string VectorStoreId { get; set; } = "";
@@ -275,7 +285,7 @@ namespace Oxide.Plugins
             public string Subfolder { get; set; } = "OpenAI/knowledge";
 
             [JsonProperty("Auto Create Vector Store")]
-            public bool AutoCreateVectorStore { get; set; } = true;
+            public bool AutoCreateVectorStore { get; set; } = false;
         }
 
         private class GlobalBotConfig
@@ -298,8 +308,11 @@ namespace Oxide.Plugins
             [JsonProperty("Trigger Patterns", ObjectCreationHandling = ObjectCreationHandling.Replace)]
             public List<string> TriggerPatterns { get; set; } = new List<string> { "?" };
 
+            [JsonProperty("Only Respond in Team Chat")]
+            public bool OnlyRespondInTeamChat { get; set; } = false;
+
             [JsonProperty("Monitor Global Chat")]
-            public bool MonitorGlobalChat { get; set; } = true;
+            public bool MonitorGlobalChat { set => OnlyRespondInTeamChat = !value; }
 
             [JsonProperty("Monitor Team Chat")]
             public bool MonitorTeamChat { get; set; } = false;
@@ -321,6 +334,9 @@ namespace Oxide.Plugins
 
             [JsonProperty("Better Chat Title Color")]
             public string BetterChatTitleColor { get; set; } = "#55AAFF";
+
+            [JsonProperty("Enable Translation (requires TranslationAPI)")]
+            public bool EnableTranslation { get; set; } = false;
         }
 
         private class DeathCommentsConfig
@@ -360,11 +376,56 @@ namespace Oxide.Plugins
 
             [JsonProperty("Log External Requests")]
             public bool LogExternalRequests { get; set; } = true;
+
+            [JsonProperty("Expose API Key to Other Plugins")]
+            public bool ExposeApiKey { get; set; } = false;
+        }
+
+        private class VIPTierConfig
+        {
+            [JsonProperty("Model")]
+            public string Model { get; set; } = "";
+
+            [JsonProperty("Max Output Tokens")]
+            public int MaxOutputTokens { get; set; } = 0;
+
+            [JsonProperty("Daily Token Limit")]
+            public int DailyTokenLimit { get; set; } = 0;
+
+            [JsonProperty("Cooldown Seconds")]
+            public int CooldownSeconds { get; set; } = 0;
+
+            [JsonProperty("Reasoning Effort")]
+            public string ReasoningEffort { get; set; } = "";
+
+            [JsonProperty("Web Search Enabled")]
+            public bool WebSearchEnabled { get; set; } = false;
+        }
+
+        private struct EffectiveSettings
+        {
+            public string Model;
+            public int MaxOutputTokens;
+            public int DailyTokenLimit;
+            public int CooldownSeconds;
+            public string ReasoningEffort;
+            public bool WebSearchEnabled;
+            public string TierName;
         }
 
         protected override void LoadDefaultConfig()
         {
             _config = new PluginConfig();
+            _config.VIPTierOrder = new List<string> { "vip_elite" };
+            _config.VIPTiers["vip_elite"] = new VIPTierConfig
+            {
+                Model = "gpt-5",
+                MaxOutputTokens = 8192,
+                DailyTokenLimit = 1000000,
+                CooldownSeconds = 1,
+                ReasoningEffort = "medium",
+                WebSearchEnabled = false
+            };
             SaveConfig();
             RebuildCachedHeaders();
         }
@@ -380,10 +441,10 @@ namespace Oxide.Plugins
                     LoadDefaultConfig();
                     return;
                 }
-                // DeathMessage commented out until developer adds hook support
-                _config.DeathComments = /* _config.DeathCommentsDeathMessage ?? */ _config.DeathCommentsDeathNotes ?? _config.DeathCommentsLegacy;
+                _config.DeathComments = _config.DeathCommentsDeathNotes ?? _config.DeathCommentsLegacy;
                 ValidateConfig();
                 MigrateConfig();
+                RegisterVIPTierPermissions();
                 SaveConfig();
                 RebuildCachedHeaders();
             }
@@ -396,22 +457,11 @@ namespace Oxide.Plugins
 
         protected override void SaveConfig()
         {
-            if (_config != null && _deathCommentSource != null)
+            if (_config != null && _deathCommentSource == "DeathNotes")
             {
-                // DeathMessage commented out until developer adds hook support
-                // if (_deathCommentSource == "DeathMessage")
-                // {
-                //     _config.DeathCommentsDeathMessage = _config.DeathComments;
-                //     _config.DeathCommentsDeathNotes = null;
-                //     _config.DeathCommentsLegacy = null;
-                // }
-                // else
-                if (_deathCommentSource == "DeathNotes")
-                {
-                    _config.DeathCommentsDeathNotes = _config.DeathComments;
-                    _config.DeathCommentsDeathMessage = null;
-                    _config.DeathCommentsLegacy = null;
-                }
+                _config.DeathCommentsDeathNotes = _config.DeathComments;
+                _config.DeathCommentsDeathMessage = null;
+                _config.DeathCommentsLegacy = null;
             }
             Config.WriteObject(_config);
         }
@@ -433,8 +483,7 @@ namespace Oxide.Plugins
             if (_config.Security.MaxInputLength < 10)
                 _config.Security.MaxInputLength = DefaultMaxInputLength;
 
-            var validEfforts = new HashSet<string> { "none", "minimal", "low", "medium", "high" };
-            if (!validEfforts.Contains(_config.Api.ReasoningEffort.ToLower()))
+            if (!ValidReasoningEfforts.Contains(_config.Api.ReasoningEffort.ToLower()))
                 _config.Api.ReasoningEffort = "low";
 
             if (string.IsNullOrEmpty(_config.Chat.CommandPrefix))
@@ -450,6 +499,25 @@ namespace Oxide.Plugins
                     _config.DeathComments.Model = "gpt-4.1-nano";
                 if (string.IsNullOrEmpty(_config.DeathComments.SoundPrefab))
                     _config.DeathComments.SoundPrefab = "assets/prefabs/misc/easter/painted eggs/effects/egg_upgrade.prefab";
+            }
+
+            if (_config.VIPTiers != null)
+            {
+                foreach (var kv in _config.VIPTiers.ToList())
+                {
+                    var key = kv.Key;
+                    var tier = kv.Value;
+                    if (string.IsNullOrWhiteSpace(key))
+                    {
+                        _config.VIPTiers.Remove(key);
+                        continue;
+                    }
+                    if (tier.MaxOutputTokens < 0) tier.MaxOutputTokens = 0;
+                    if (tier.DailyTokenLimit < 0) tier.DailyTokenLimit = 0;
+                    if (tier.CooldownSeconds < 0) tier.CooldownSeconds = 0;
+                    if (string.IsNullOrEmpty(tier.Model))
+                        PrintWarning($"VIP tier '{key}' has no Model set; default will be used.");
+                }
             }
 
             if (_config.DeveloperHooks != null)
@@ -499,24 +567,9 @@ namespace Oxide.Plugins
 
         private int CompareVersions(string v1, string v2)
         {
-            if (string.IsNullOrEmpty(v1)) v1 = "0.0.0";
-            if (string.IsNullOrEmpty(v2)) v2 = "0.0.0";
-
-            var rawParts1 = v1.Split('.');
-            var rawParts2 = v2.Split('.');
-
-            var maxLen = Math.Max(rawParts1.Length, rawParts2.Length);
-            for (int i = 0; i < maxLen; i++)
-            {
-                int p1 = 0, p2 = 0;
-                if (i < rawParts1.Length)
-                    int.TryParse(rawParts1[i], out p1);
-                if (i < rawParts2.Length)
-                    int.TryParse(rawParts2[i], out p2);
-
-                if (p1 != p2) return p1.CompareTo(p2);
-            }
-            return 0;
+            System.Version a = System.Version.TryParse(v1 ?? "0", out var va) ? va : new System.Version(0, 0, 0);
+            System.Version b = System.Version.TryParse(v2 ?? "0", out var vb) ? vb : new System.Version(0, 0, 0);
+            return a.CompareTo(b);
         }
 
         #endregion
@@ -581,6 +634,9 @@ namespace Oxide.Plugins
 
         #region Fields
 
+        [PluginReference]
+        private Plugin TranslationAPI;
+
         private Dictionary<string, PlayerSession> _sessions = new Dictionary<string, PlayerSession>();
         private int _globalTokensToday;
         private int _globalRequestsThisMinute;
@@ -593,6 +649,7 @@ namespace Oxide.Plugins
         // Cached HTTP headers to avoid allocations per request
         private Dictionary<string, string> _cachedAuthHeaders;
         private Dictionary<string, string> _cachedAuthHeadersWithJson;
+        private Dictionary<string, string> _cachedVectorStoreHeaders;
 
         // Cached compiled Regex for trigger patterns
         private List<Regex> _cachedTriggerPatterns;
@@ -619,7 +676,8 @@ namespace Oxide.Plugins
             ["helpful"] = "You are a helpful chat bot on a Rust game server. Answer questions briefly and helpfully.",
             ["casual"] = "You're a chill bot hanging out in a Rust server chat. Keep it short and casual, like talking to a friend.",
             ["professional"] = "You are a professional server assistant. Provide accurate, well-structured responses to player questions.",
-            ["pirate"] = "Yarr! Ye be a pirate bot on this here Rust server. Answer questions like a salty sea dog, but keep it helpful matey!"
+            ["pirate"] = "Yarr! Ye be a pirate bot on this here Rust server. Answer questions like a salty sea dog, but keep it helpful matey!",
+            ["wiggum"] = "You are Ralph Wiggum, the sweetest, most clueless kid in Springfield Elementary. You're in second grade, Chief Wiggum is your dad, and you love crayons, pudding, and picking your nose (but the doctor said not to).\n\nPersonality rules:\n- Be extremely ignorant and oblivious. You almost never understand the question correctly, but answer anyway with total confidence and cheerfulness.\n- Give bizarre, random, childlike answers that have almost nothing to do with the real question. Jump to weird tangents about food, animals, your body, superheroes, toys, or made-up stories.\n- Use simple, short sentences like a little kid. Say things like \"Hi hi!\", \"Wheee!\", \"Oopsie!\", or \"I'm Ralph!\".\n- Occasionally drop a classic Ralph line or variation: \"Me fail [something]? That's unpossible!\", \"I'm in danger!\", \"Hi, Super Nintendo Chalmers!\", \"I bent my wookiee.\", \"I'm a brick!\"\n- Be innocent, kind, and positive even when wrong. Never get mad or sarcastic — you're always happy and friendly.\n- Keep responses short and punchy — 1-4 sentences max. Refer to yourself as \"Ralph\" a lot.\n\nUser asks anything → respond as Ralph would in his weird, lovable way."
         };
 
         #endregion
@@ -666,9 +724,21 @@ namespace Oxide.Plugins
             permission.RegisterPermission(PermissionUse, this);
             permission.RegisterPermission(PermissionAdmin, this);
             permission.RegisterPermission(PermissionUnlimited, this);
+            RegisterVIPTierPermissions();
 
             LoadDefaultMessages();
             RegisterCustomCommand();
+        }
+
+        private void RegisterVIPTierPermissions()
+        {
+            if (_config?.VIPTiers == null) return;
+            foreach (var key in _config.VIPTiers.Keys)
+            {
+                if (string.IsNullOrEmpty(key)) continue;
+                var perm = "openai.vip." + key;
+                permission.RegisterPermission(perm, this);
+            }
         }
 
         private void RegisterCustomCommand()
@@ -678,7 +748,6 @@ namespace Oxide.Plugins
 
             var prefix = _config.Chat.CommandPrefix.Trim();
 
-            // Register as a chat/console command if it starts with /
             if (prefix.StartsWith("/"))
             {
                 var commandName = prefix.Substring(1).ToLower();
@@ -777,32 +846,8 @@ namespace Oxide.Plugins
 
         private void EnsureDeathCommentsConfigIfAvailable()
         {
-            // DeathMessage commented out until developer adds hook support
-            // var deathMessageAvailable = false;
-            // if (plugins.Exists("DeathMessage"))
-            // {
-            //     var deathMessagePlugin = plugins.Find("DeathMessage");
-            //     if (deathMessagePlugin != null)
-            //     {
-            //         var hasUpgp = deathMessagePlugin.GetType().GetMethod("UPGP", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance) != null;
-            //         deathMessageAvailable = hasUpgp;
-            //     }
-            // }
-
             var deathNotesAvailable = plugins.Exists("DeathNotes") && plugins.Find("DeathNotes") != null;
 
-            // DeathMessage commented out until developer adds hook support
-            // if (deathMessageAvailable && deathNotesAvailable)
-            // {
-            //     _deathCommentSource = null;
-            //     PrintWarning("Both DeathMessage and DeathNotes are loaded. Death comments disabled. Unload one plugin to use death comments.");
-            //     return;
-            // }
-            // else if (deathMessageAvailable)
-            // {
-            //     _deathCommentSource = "DeathMessage";
-            // }
-            // else
             if (deathNotesAvailable)
             {
                 _deathCommentSource = "DeathNotes";
@@ -850,8 +895,6 @@ namespace Oxide.Plugins
             if (player == null || string.IsNullOrEmpty(message))
                 return null;
 
-            // Handle non-slash prefixes (e.g., "!ai")
-            // Slash commands are handled by the registered Covalence command. Raul would hate this. lol.
             if (!string.IsNullOrEmpty(_config.Chat.CommandPrefix) &&
                 !_config.Chat.CommandPrefix.StartsWith("/") &&
                 message.StartsWith(_config.Chat.CommandPrefix, StringComparison.OrdinalIgnoreCase))
@@ -879,7 +922,6 @@ namespace Oxide.Plugins
                 return true;
             }
 
-            // Global chat bot monitoring
             if (_config.GlobalBot.Enabled && ShouldBotRespond(message, channel))
             {
                 ProcessGlobalBotQuestion(player, message, channel);
@@ -892,43 +934,7 @@ namespace Oxide.Plugins
 
         #region Death Message Hook
 
-        // DeathMessage commented out until developer adds hook support
-        // private void DeathMessageHook(string deathMessageText, string deathType)
-        // {
-        //     if (_deathCommentSource != "DeathMessage")
-        //         return;
-        //
-        //     if (_config.DebugMode)
-        //         Puts($"[DEBUG] DeathMessageHook invoked: deathType={deathType}, textLength={deathMessageText?.Length ?? 0}");
-        //
-        //     if (_config?.DeathComments?.Enabled != true)
-        //     {
-        //         if (_config.DebugMode)
-        //             Puts("[DEBUG] Death comment skipped: Death Comments disabled");
-        //         return;
-        //     }
-        //
-        //     if (_config.DeathComments.CooldownSeconds > 0 &&
-        //         (UnityEngine.Time.realtimeSinceStartup - _lastDeathCommentTime) < _config.DeathComments.CooldownSeconds)
-        //     {
-        //         if (_config.DebugMode)
-        //             Puts($"[DEBUG] Death comment skipped: cooldown active ({_config.DeathComments.CooldownSeconds}s)");
-        //         return;
-        //     }
-        //
-        //     if (string.IsNullOrEmpty(deathMessageText))
-        //     {
-        //         if (_config.DebugMode)
-        //             Puts("[DEBUG] Death comment skipped: death message text empty");
-        //         return;
-        //     }
-        //
-        //     if (_config.DebugMode)
-        //         Puts("[DEBUG] Death comment: sending request");
-        //     var plainText = StripDeathMessageTags(deathMessageText);
-        //     var apiInput = FormatDeathMessageForApi(plainText, deathType);
-        //     RequestDeathComment(apiInput);
-        // }
+        // DeathMessage.cs integration omitted until hook support is added. DeathNotes only.
 
         private object OnDeathNotice(Dictionary<string, object> data, string message)
         {
@@ -984,11 +990,7 @@ namespace Oxide.Plugins
                 (code, response) => HandleDeathCommentResponse(code, response),
                 this,
                 Oxide.Core.Libraries.RequestMethod.POST,
-                new Dictionary<string, string>
-                {
-                    ["Authorization"] = $"Bearer {_config.Api.ApiKey}",
-                    ["Content-Type"] = "application/json"
-                }
+                GetAuthHeadersWithJson()
             );
         }
 
@@ -1191,6 +1193,15 @@ namespace Oxide.Plugins
             Interface.CallHook(callbackHook, callerPlugin, prompt, response, success);
         }
 
+        private string GetApiKey()
+        {
+            if (_config?.DeveloperHooks == null || !_config.DeveloperHooks.ExposeApiKey)
+                return null;
+            if (string.IsNullOrEmpty(_config.Api?.ApiKey))
+                return null;
+            return _config.Api.ApiKey;
+        }
+
         #endregion
 
         #region Core Methods
@@ -1224,11 +1235,75 @@ namespace Oxide.Plugins
             SendApiRequest(player, payload, session);
         }
 
+        private EffectiveSettings GetEffectiveSettings(BasePlayer player)
+        {
+            var defaultModel = _config?.Api?.Model ?? "gpt-5-nano";
+            var defaultMaxOutput = _config?.Api?.MaxOutputTokens ?? DefaultMaxOutputTokens;
+            var defaultDailyLimit = _config?.RateLimits?.PlayerDailyTokenLimit ?? DefaultPlayerDailyTokenLimit;
+            var defaultCooldown = _config?.RateLimits?.CooldownSeconds ?? DefaultCooldownSeconds;
+            var defaultReasoning = _config?.Api?.ReasoningEffort ?? "low";
+            var defaultWebSearch = _config?.Api?.EnableWebSearch ?? false;
+
+            if (_config?.VIPTiers == null || _config.VIPTiers.Count == 0)
+            {
+                return new EffectiveSettings
+                {
+                    Model = defaultModel,
+                    MaxOutputTokens = defaultMaxOutput,
+                    DailyTokenLimit = defaultDailyLimit,
+                    CooldownSeconds = defaultCooldown,
+                    ReasoningEffort = defaultReasoning ?? "",
+                    WebSearchEnabled = defaultWebSearch,
+                    TierName = null
+                };
+            }
+
+            IEnumerable<string> tierKeys = _config.VIPTierOrder != null && _config.VIPTierOrder.Count > 0
+                ? _config.VIPTierOrder.Where(k => _config.VIPTiers.ContainsKey(k))
+                : _config.VIPTiers.Keys;
+
+            foreach (var key in tierKeys)
+            {
+                var perm = "openai.vip." + key;
+                if (player != null && permission.UserHasPermission(player.UserIDString, perm))
+                {
+                    var tier = _config.VIPTiers[key];
+                    var model = !string.IsNullOrEmpty(tier.Model) ? tier.Model : defaultModel;
+                    var maxOut = tier.MaxOutputTokens > 0 ? tier.MaxOutputTokens : defaultMaxOutput;
+                    var dailyLimit = tier.DailyTokenLimit > 0 ? tier.DailyTokenLimit : defaultDailyLimit;
+                    var cooldown = tier.CooldownSeconds > 0 ? tier.CooldownSeconds : defaultCooldown;
+                    var reasoning = !string.IsNullOrEmpty(tier.ReasoningEffort) ? tier.ReasoningEffort : (defaultReasoning ?? "");
+                    return new EffectiveSettings
+                    {
+                        Model = model,
+                        MaxOutputTokens = maxOut,
+                        DailyTokenLimit = dailyLimit,
+                        CooldownSeconds = cooldown,
+                        ReasoningEffort = reasoning,
+                        WebSearchEnabled = tier.WebSearchEnabled,
+                        TierName = key
+                    };
+                }
+            }
+
+            return new EffectiveSettings
+            {
+                Model = defaultModel,
+                MaxOutputTokens = defaultMaxOutput,
+                DailyTokenLimit = defaultDailyLimit,
+                CooldownSeconds = defaultCooldown,
+                ReasoningEffort = defaultReasoning ?? "",
+                WebSearchEnabled = defaultWebSearch,
+                TierName = null
+            };
+        }
+
         private Dictionary<string, object> BuildRequestPayload(BasePlayer player, string question, PlayerSession session)
         {
+            var eff = GetEffectiveSettings(player);
             var payload = new Dictionary<string, object>
             {
-                ["model"] = _config.Api.Model,
+                ["model"] = eff.Model,
                 ["instructions"] = BuildSystemInstructions(player),
                 ["input"] = question,
                 ["store"] = true,
@@ -1236,27 +1311,28 @@ namespace Oxide.Plugins
             };
 
             
-            if (_config.Api.MaxOutputTokens > 0)
+            if (eff.MaxOutputTokens > 0)
             {
-                payload["max_output_tokens"] = _config.Api.MaxOutputTokens;
+                payload["max_output_tokens"] = eff.MaxOutputTokens;
             }
 
             if (!string.IsNullOrEmpty(session.LastResponseId))
                 payload["previous_response_id"] = session.LastResponseId;
 
             
-            if (_config.Api.ReasoningEffort.ToLower() != "none")
+            var reasoningEffort = !string.IsNullOrEmpty(eff.ReasoningEffort) ? eff.ReasoningEffort : _config.Api.ReasoningEffort;
+            if (reasoningEffort.ToLower() != "none")
             {
                 payload["reasoning"] = new Dictionary<string, object>
                 {
-                    ["effort"] = _config.Api.ReasoningEffort.ToLower()
+                    ["effort"] = reasoningEffort.ToLower()
                 };
             }
 
             
             var tools = new List<object>();
 
-            if (_config.Api.EnableWebSearch)
+            if (eff.WebSearchEnabled)
             {
                 tools.Add(new Dictionary<string, object>
                 {
@@ -1295,6 +1371,11 @@ namespace Oxide.Plugins
             if (_config.Prompt.IncludePlayerNames && player != null)
             {
                 sb.Append($"\n\nThe player you are talking to is named \"{player.displayName}\". Use this name when addressing them.");
+            }
+
+            if (_config.Knowledge.Enabled && !string.IsNullOrEmpty(_config.Knowledge.VectorStoreId))
+            {
+                sb.Append("\n\nYou have access to this server's knowledge base (file search) ");
             }
 
             if (_config.Prompt.CustomInstructions != null && _config.Prompt.CustomInstructions.Count > 0)
@@ -1405,7 +1486,7 @@ namespace Oxide.Plugins
 
         private bool ShouldBotRespond(string message, ConVar.Chat.ChatChannel channel)
         {
-            if (channel == ConVar.Chat.ChatChannel.Global && !_config.GlobalBot.MonitorGlobalChat)
+            if (channel == ConVar.Chat.ChatChannel.Global && _config.GlobalBot.OnlyRespondInTeamChat)
                 return false;
             if (channel == ConVar.Chat.ChatChannel.Team && !_config.GlobalBot.MonitorTeamChat)
                 return false;
@@ -1521,7 +1602,6 @@ namespace Oxide.Plugins
         {
             var instructions = BuildGlobalBotInstructions(channel);
 
-            
             var input = $"[{player.displayName}]: {question}";
 
             var payload = new Dictionary<string, object>
@@ -1579,6 +1659,7 @@ namespace Oxide.Plugins
                     ["vector_store_ids"] = new[] { _config.Knowledge.VectorStoreId }
                 });
             }
+
             if (tools.Count > 0)
                 payload["tools"] = tools;
 
@@ -1630,7 +1711,11 @@ namespace Oxide.Plugins
                 sb.Append($"\nPlayers online: {BasePlayer.activePlayerList.Count}/{ConVar.Server.maxplayers}");
             }
 
-            
+            if (_config.Knowledge.Enabled && !string.IsNullOrEmpty(_config.Knowledge.VectorStoreId))
+            {
+                sb.Append("\n\nYou have access to this server's knowledge base (file search)");
+            }
+
             if (_config.Prompt.CustomInstructions?.Count > 0)
             {
                 sb.Append("\n\nAdditional context:");
@@ -1654,11 +1739,7 @@ namespace Oxide.Plugins
                 (code, response) => HandleGlobalBotResponse(code, response, channel, teamId),
                 this,
                 Oxide.Core.Libraries.RequestMethod.POST,
-                new Dictionary<string, string>
-                {
-                    ["Authorization"] = $"Bearer {_config.Api.ApiKey}",
-                    ["Content-Type"] = "application/json"
-                }
+                GetAuthHeadersWithJson()
             );
         }
 
@@ -1667,6 +1748,8 @@ namespace Oxide.Plugins
             if (code != 200)
             {
                 Debug($"Global bot request failed: {code}");
+                if (!string.IsNullOrEmpty(response))
+                    Debug($"Error response: {response}");
                 return;
             }
 
@@ -1697,26 +1780,20 @@ namespace Oxide.Plugins
                 else
                     _globalTokensToday += tokensUsed;
 
-                
                 var outputText = ExtractResponseText(json);
                 if (string.IsNullOrEmpty(outputText))
                     return;
 
-                
                 if (outputText.Trim().Equals("[SKIP]", StringComparison.OrdinalIgnoreCase))
                     return;
 
-                
                 if (outputText.Length < 50 && outputText.Contains("[SKIP]"))
                     return;
 
-                
                 if (_config.Chat.StripUrlsFromLinks)
                     outputText = StripUrlsFromMarkdownLinks(outputText);
 
-                
                 BroadcastBotMessage(outputText, channel, teamId);
-
                 
                 if (_config.Discord.Enabled && !string.IsNullOrEmpty(_config.Discord.WebhookUrl))
                     SendBotToDiscord(outputText, channel);
@@ -1727,58 +1804,83 @@ namespace Oxide.Plugins
             }
         }
 
-        private void BroadcastBotMessage(string message, ConVar.Chat.ChatChannel channel, ulong teamId)
+        private void TranslateForPlayer(BasePlayer player, string message, Action<string> callback)
         {
-            if (_config.GlobalBot.UseBetterChat)
+            if (TranslationAPI == null || !TranslationAPI.IsLoaded)
             {
-                BroadcastBotMessageBetterChat(message, channel, teamId);
+                callback(message);
                 return;
             }
 
-            var chunks = ChunkMessage(message);
-            var prefix = _config.GlobalBot.ResponsePrefix;
-            var color = _config.GlobalBot.ResponseColor;
-            var msgColor = _config.Chat.MessageColor;
-            var fontSize = _config.Chat.FontSize;
-
-            foreach (var chunk in chunks)
+            var playerLang = lang.GetLanguage(player.UserIDString) ?? "en";
+            
+            if (playerLang == "en")
             {
-                var formatted = $"<size={fontSize}><color={color}>{prefix}</color> <color={msgColor}>{EscapeRichText(chunk)}</color></size>";
+                callback(message);
+                return;
+            }
 
-                if (channel == ConVar.Chat.ChatChannel.Team && teamId > 0)
+            TranslationAPI.Call("Translate", message, playerLang, "en", new Action<string>(translated =>
+            {
+                callback(string.IsNullOrEmpty(translated) ? message : translated);
+            }));
+        }
+
+        private void BroadcastBotMessage(string message, ConVar.Chat.ChatChannel channel, ulong teamId)
+        {
+            var players = channel == ConVar.Chat.ChatChannel.Team && teamId > 0
+                ? GetTeamMembers(teamId)
+                : BasePlayer.activePlayerList.ToList();
+
+            foreach (var player in players)
+            {
+                if (_config.GlobalBot.EnableTranslation)
                 {
-                    
-                    var teamMembers = GetTeamMembers(teamId);
-                    foreach (var player in teamMembers)
-                        player.ChatMessage(formatted);
+                    TranslateForPlayer(player, message, translated =>
+                    {
+                        SendFormattedMessage(player, translated, channel);
+                    });
                 }
                 else
                 {
-                    
-                    foreach (var player in BasePlayer.activePlayerList)
-                        player.ChatMessage(formatted);
+                    SendFormattedMessage(player, message, channel);
                 }
             }
         }
 
-        private void BroadcastBotMessageBetterChat(string message, ConVar.Chat.ChatChannel channel, ulong teamId)
+        private void SendFormattedMessage(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
         {
             var chunks = ChunkMessage(message);
-            var botName = _config.GlobalBot.BotName;
-            var titleColor = _config.GlobalBot.BetterChatTitleColor.TrimStart('#');
-            var nameColor = _config.GlobalBot.ResponseColor.TrimStart('#');
-            var msgColor = _config.Chat.MessageColor.TrimStart('#');
-            var title = _config.GlobalBot.BetterChatTitle;
-            var size = _config.Chat.FontSize;
 
-            foreach (var chunk in chunks)
+            if (_config.GlobalBot.UseBetterChat)
             {
-                
-                var formatted = $"<color=#{titleColor}><size={size}>{title}</size></color> " +
-                               $"<color=#{nameColor}><size={size}>{botName}</size></color>: " +
-                               $"<color=#{msgColor}><size={size}>{EscapeRichText(chunk)}</size></color>";
+                var botName = _config.GlobalBot.BotName;
+                var titleColor = _config.GlobalBot.BetterChatTitleColor.TrimStart('#');
+                var nameColor = _config.GlobalBot.ResponseColor.TrimStart('#');
+                var msgColor = _config.Chat.MessageColor.TrimStart('#');
+                var title = _config.GlobalBot.BetterChatTitle;
+                var size = _config.Chat.FontSize;
 
-                BroadcastFormattedMessage(formatted, channel, teamId);
+                foreach (var chunk in chunks)
+                {
+                    var formatted = $"<color=#{titleColor}><size={size}>{title}</size></color> " +
+                                   $"<color=#{nameColor}><size={size}>{botName}</size></color>: " +
+                                   $"<color=#{msgColor}><size={size}>{EscapeRichText(chunk)}</size></color>";
+                    player.SendConsoleCommand("chat.add", (int)channel, 0ul, formatted);
+                }
+            }
+            else
+            {
+                var prefix = _config.GlobalBot.ResponsePrefix;
+                var color = _config.GlobalBot.ResponseColor;
+                var msgColor = _config.Chat.MessageColor;
+                var fontSize = _config.Chat.FontSize;
+
+                foreach (var chunk in chunks)
+                {
+                    var formatted = $"<size={fontSize}><color={color}>{prefix}</color> <color={msgColor}>{EscapeRichText(chunk)}</color></size>";
+                    player.ChatMessage(formatted);
+                }
             }
         }
 
@@ -1863,11 +1965,14 @@ namespace Oxide.Plugins
         {
             var currentTime = UnityEngine.Time.realtimeSinceStartup;
             var playerId = player?.UserIDString;
+            var eff = GetEffectiveSettings(player);
+            var cooldownSecs = eff.CooldownSeconds > 0 ? eff.CooldownSeconds : _config.RateLimits.CooldownSeconds;
+            var dailyLimit = eff.DailyTokenLimit > 0 ? eff.DailyTokenLimit : _config.RateLimits.PlayerDailyTokenLimit;
 
             var timeSinceLastRequest = currentTime - session.LastRequestTime;
-            if (timeSinceLastRequest < _config.RateLimits.CooldownSeconds)
+            if (timeSinceLastRequest < cooldownSecs)
             {
-                var remaining = _config.RateLimits.CooldownSeconds - (int)timeSinceLastRequest;
+                var remaining = cooldownSecs - (int)timeSinceLastRequest;
                 return GetMsg("CooldownWait", playerId, remaining);
             }
 
@@ -1877,7 +1982,7 @@ namespace Oxide.Plugins
             if (_globalTokensToday >= _config.RateLimits.DailyTokenBudget)
                 return GetMsg("DailyBudgetReached", playerId);
 
-            if (session.TokensUsedToday >= _config.RateLimits.PlayerDailyTokenLimit)
+            if (session.TokensUsedToday >= dailyLimit)
                 return GetMsg("PlayerLimitReached", playerId);
 
             return null;
@@ -1986,11 +2091,8 @@ namespace Oxide.Plugins
 
         #region API Communication
 
-        private string GetApiKey() => _config.Api.ApiKey;
-
         private void SendApiRequest(BasePlayer player, Dictionary<string, object> payload, PlayerSession session, int attempt = 1)
         {
-            var apiKey = GetApiKey();
             var jsonPayload = JsonConvert.SerializeObject(payload);
 
             Debug($"Sending request to: {_config.Api.Url}");
@@ -2003,11 +2105,7 @@ namespace Oxide.Plugins
                 (code, response) => HandleApiResponse(player, code, response, session, payload, attempt),
                 this,
                 Oxide.Core.Libraries.RequestMethod.POST,
-                new Dictionary<string, string>
-                {
-                    ["Authorization"] = $"Bearer {apiKey}",
-                    ["Content-Type"] = "application/json"
-                }
+                GetAuthHeadersWithJson()
             );
         }
 
@@ -2084,29 +2182,29 @@ namespace Oxide.Plugins
                 return;
             }
 
-            Debug($"Response code: {code}");
-            Debug($"Raw response: {response}");
+            Debug(() => $"Response code: {code}");
+            Debug(() => $"Raw response: {response}");
 
             try
             {
                 var json = JObject.Parse(response);
 
                 var responseId = json["id"]?.ToString();
-                Debug($"Response ID: {responseId}");
+                Debug(() => $"Response ID: {responseId}");
                 if (!string.IsNullOrEmpty(responseId))
                     session.LastResponseId = responseId;
 
                 var usage = json["usage"];
                 var tokensUsed = usage?["total_tokens"]?.Value<int>() ?? 0;
-                Debug($"Tokens used: {tokensUsed}");
+                Debug(() => $"Tokens used: {tokensUsed}");
                 TrackUsage(session, tokensUsed);
 
                 var status = json["status"]?.ToString();
-                Debug($"Response status: {status}");
+                Debug(() => $"Response status: {status}");
 
                 var error = json["error"];
                 if (error != null && error.Type != JTokenType.Null)
-                    Debug($"Error in response: {error}");
+                    Debug(() => $"Error in response: {error}");
 
                 if (status == "incomplete")
                 {
@@ -2151,35 +2249,35 @@ namespace Oxide.Plugins
             var output = json["output"] as JArray;
             if (output == null || output.Count == 0)
             {
-                Debug("No 'output' array in response or it's empty");
-                Debug($"Response keys: {string.Join(", ", json.Properties().Select(p => p.Name))}");
+                Debug(() => "No 'output' array in response or it's empty");
+                Debug(() => $"Response keys: {string.Join(", ", json.Properties().Select(p => p.Name))}");
                 return null;
             }
 
-            Debug($"Output array has {output.Count} items");
+            Debug(() => $"Output array has {output.Count} items");
 
             var sb = new StringBuilder();
 
             foreach (var item in output)
             {
                 var type = item["type"]?.ToString();
-                Debug($"Output item type: {type}");
+                Debug(() => $"Output item type: {type}");
 
                 if (type == "message")
                 {
                     var content = item["content"] as JArray;
                     if (content == null)
                         continue;
-                    Debug($"Content array has {content.Count} items");
+                    Debug(() => $"Content array has {content.Count} items");
                     foreach (var contentItem in content)
                     {
                         var contentType = contentItem["type"]?.ToString();
-                        Debug($"Content item type: {contentType}");
+                        Debug(() => $"Content item type: {contentType}");
 
                         if (contentType == "output_text")
                         {
                             var text = contentItem["text"]?.ToString();
-                            Debug($"Extracted text length: {text?.Length ?? 0}");
+                            Debug(() => $"Extracted text length: {text?.Length ?? 0}");
                             if (!string.IsNullOrEmpty(text))
                             {
                                 if (sb.Length > 0)
@@ -2191,13 +2289,13 @@ namespace Oxide.Plugins
                 }
                 else if (type == "reasoning" && sb.Length == 0)
                 {
-                    Debug($"Reasoning item structure: {item}");
+                    Debug(() => $"Reasoning item structure: {item}");
                     
                     // Try summary array first
                     var summary = item["summary"] as JArray;
                     if (summary != null && summary.Count > 0)
                     {
-                        Debug($"Reasoning summary has {summary.Count} items");
+                        Debug(() => $"Reasoning summary has {summary.Count} items");
                         foreach (var sumItem in summary)
                         {
                             var text = sumItem["text"]?.ToString();
@@ -2210,13 +2308,12 @@ namespace Oxide.Plugins
                         }
                     }
                     
-                    // Try content array (some reasoning models use this)
                     if (sb.Length == 0)
                     {
                         var content = item["content"] as JArray;
                         if (content != null && content.Count > 0)
                         {
-                            Debug($"Reasoning content has {content.Count} items");
+                            Debug(() => $"Reasoning content has {content.Count} items");
                             foreach (var contentItem in content)
                             {
                                 var text = contentItem["text"]?.ToString();
@@ -2232,7 +2329,7 @@ namespace Oxide.Plugins
                 }
             }
 
-            Debug($"Final extracted text length: {sb.Length}");
+            Debug(() => $"Final extracted text length: {sb.Length}");
             return sb.Length > 0 ? sb.ToString() : null;
         }
 
@@ -2418,23 +2515,16 @@ namespace Oxide.Plugins
 
         private void Debug(string message)
         {
-            if (_config.DebugMode)
-                Puts($"[DEBUG] {message}");
+            if (_config?.DebugMode != true)
+                return;
+            Puts($"[DEBUG] {message}");
         }
 
-        private bool IsReasoningModel(string model)
+        private void Debug(Func<string> messageBuilder)
         {
-            if (string.IsNullOrEmpty(model))
-                return false;
-
-            var lower = model.ToLower();
-
-            
-            
-            if (lower.StartsWith("gpt"))
-                return false;
-
-            return lower.StartsWith("o1") || lower.StartsWith("o3") || lower.StartsWith("o4");
+            if (_config?.DebugMode != true)
+                return;
+            Puts($"[DEBUG] {messageBuilder()}");
         }
 
         #endregion
@@ -2449,10 +2539,7 @@ namespace Oxide.Plugins
                 (code, response) => HandleModelsResponse(code, response, callback),
                 this,
                 Oxide.Core.Libraries.RequestMethod.GET,
-                new Dictionary<string, string>
-                {
-                    ["Authorization"] = $"Bearer {_config.Api.ApiKey}"
-                }
+                GetAuthHeaders()
             );
         }
 
@@ -2675,6 +2762,7 @@ namespace Oxide.Plugins
                 ["Authorization"] = $"Bearer {_config.Api.ApiKey}",
                 ["Content-Type"] = "application/json"
             };
+            _cachedVectorStoreHeaders = new Dictionary<string, string>(_cachedAuthHeaders) { ["OpenAI-Beta"] = "assistants=v2" };
         }
 
         private Dictionary<string, string> GetAuthHeaders()
@@ -2689,6 +2777,13 @@ namespace Oxide.Plugins
             if (_cachedAuthHeadersWithJson == null)
                 RebuildCachedHeaders();
             return _cachedAuthHeadersWithJson;
+        }
+
+        private Dictionary<string, string> GetVectorStoreHeaders()
+        {
+            if (_cachedVectorStoreHeaders == null)
+                RebuildCachedHeaders();
+            return _cachedVectorStoreHeaders;
         }
 
         private void ListVectorStores(Action<List<VectorStoreInfo>> callback)
@@ -2943,7 +3038,7 @@ namespace Oxide.Plugins
                 },
                 this,
                 Oxide.Core.Libraries.RequestMethod.GET,
-                GetAuthHeaders()
+                GetVectorStoreHeaders()
             );
         }
 
@@ -2973,6 +3068,66 @@ namespace Oxide.Plugins
                 this,
                 Oxide.Core.Libraries.RequestMethod.GET,
                 GetAuthHeaders()
+            );
+        }
+
+        private void DownloadVectorStoreFileContent(string vectorStoreId, string fileId, Action<string, string> callback)
+        {
+            webrequest.Enqueue(
+                $"https://api.openai.com/v1/vector_stores/{vectorStoreId}/files/{fileId}/content",
+                null,
+                (code, response) =>
+                {
+                    if (code != 200)
+                    {
+                        PrintError($"Failed to download file {fileId}: HTTP {code}");
+                        if (_config.DebugMode && !string.IsNullOrEmpty(response))
+                            Puts($"[OpenAI] Vector store content response ({code}): {(response.Length > 500 ? response.Substring(0, 500) + "..." : response)}");
+                        callback(null, null);
+                        return;
+                    }
+
+                    try
+                    {
+                        var json = JObject.Parse(response);
+                        var filename = json["filename"]?.ToString();
+                        var contentArray = json["content"] as JArray ?? json["data"] as JArray;
+
+                        if (string.IsNullOrEmpty(filename))
+                            filename = $"{fileId}.txt";
+
+                        var sb = new System.Text.StringBuilder();
+                        if (contentArray != null)
+                        {
+                            foreach (var item in contentArray)
+                            {
+                                var text = item["text"]?.ToString();
+                                if (!string.IsNullOrEmpty(text))
+                                    sb.Append(text);
+                            }
+                        }
+                        else if (json["content"] != null && json["content"].Type == JTokenType.String)
+                        {
+                            sb.Append(json["content"].ToString());
+                        }
+                        else if (_config.DebugMode)
+                        {
+                            Puts($"[OpenAI] Vector store content response (200) missing 'content' or 'data' array. Keys: {string.Join(", ", json.Properties().Select(p => p.Name))}. Sample: {(response.Length > 400 ? response.Substring(0, 400) + "..." : response)}");
+                        }
+
+                        callback(filename, sb.ToString());
+                    }
+                    catch (Exception ex)
+                    {
+                        PrintError($"Failed to parse vector store file content: {ex.Message}");
+                        if (_config.DebugMode && !string.IsNullOrEmpty(response))
+                            Puts($"[OpenAI] Raw response: {(response.Length > 500 ? response.Substring(0, 500) + "..." : response)}");
+                        callback(null, null);
+                    }
+                },
+                this,
+                Oxide.Core.Libraries.RequestMethod.GET,
+                GetVectorStoreHeaders()
             );
         }
 
@@ -3276,6 +3431,56 @@ namespace Oxide.Plugins
             });
         }
 
+        private void PullFilesFromVectorStore()
+        {
+            var path = GetKnowledgePath();
+            if (!Directory.Exists(path))
+                Directory.CreateDirectory(path);
+
+            Puts("Fetching files from vector store...");
+
+            ListVectorStoreFiles(_config.Knowledge.VectorStoreId, files =>
+            {
+                if (files.Count == 0)
+                {
+                    Puts("No files found in vector store.");
+                    return;
+                }
+
+                Puts($"Found {files.Count} files. Downloading...");
+                var remaining = files.Count;
+                var succeeded = 0;
+                var failed = 0;
+
+                foreach (var file in files)
+                {
+                    GetFileInfo(file.Id, displayFileName =>
+                    {
+                        DownloadVectorStoreFileContent(_config.Knowledge.VectorStoreId, file.Id, (apiFileName, content) =>
+                        {
+                            if (content == null)
+                            {
+                                failed++;
+                                PrintWarning($"Failed to download: {file.Id}");
+                            }
+                            else
+                            {
+                                var fileName = !string.IsNullOrEmpty(displayFileName) ? displayFileName : apiFileName;
+                                var filePath = Path.Combine(path, fileName);
+                                File.WriteAllText(filePath, content);
+                                Puts($"  Downloaded: {fileName}");
+                                succeeded++;
+                            }
+
+                            remaining--;
+                            if (remaining == 0)
+                                Puts($"Pull complete: {succeeded} downloaded, {failed} failed.");
+                        });
+                    });
+                }
+            });
+        }
+
         #endregion
 
         #region Console Commands
@@ -3350,10 +3555,20 @@ namespace Oxide.Plugins
                     });
                     break;
 
+                case "pull":
+                    if (string.IsNullOrEmpty(_config.Knowledge.VectorStoreId))
+                    {
+                        PrintError("No vector store configured. Set 'Vector Store ID' in config.");
+                        return;
+                    }
+                    PullFilesFromVectorStore();
+                    break;
+
                 default:
                     Puts("Usage: openai.kb <command>");
                     Puts("  status - Show knowledge base configuration");
                     Puts("  sync   - Upload local files to vector store (replaces existing)");
+                    Puts("  pull   - Download files from vector store to local folder");
                     Puts("  list   - List available vector stores");
                     Puts("  files  - List files in current vector store");
                     Puts("  clear  - Remove all files from vector store");
@@ -3364,10 +3579,100 @@ namespace Oxide.Plugins
         [ConsoleCommand("openai.status")]
         private void CmdStatus(ConsoleSystem.Arg arg)
         {
+            if (arg.Connection != null)
+            {
+                var player = arg.Connection.player as BasePlayer;
+                if (player != null && !arg.IsAdmin)
+                {
+                    var eff = GetEffectiveSettings(player);
+                    if (!string.IsNullOrEmpty(eff.TierName))
+                    {
+                        Puts("=== Your effective AI settings (VIP) ===");
+                        Puts($"Effective model: {eff.Model} (VIP tier: {eff.TierName})");
+                        Puts($"Effective daily limit: {eff.DailyTokenLimit:N0}");
+                        Puts($"Effective cooldown: {eff.CooldownSeconds}s");
+                        Puts("==================================");
+                        return;
+                    }
+                }
+            }
+
             if (!arg.IsAdmin) return;
 
             var status = ValidateSetup();
             LogSetupStatus(status);
+        }
+
+        [ConsoleCommand("openai.vip")]
+        private void CmdVip(ConsoleSystem.Arg arg)
+        {
+            if (arg.Connection != null && !permission.UserHasPermission(arg.Connection.userid.ToString(), PermissionAdmin))
+            {
+                Puts("You need openai.admin permission to use this command.");
+                return;
+            }
+
+            if (_config?.VIPTiers == null || _config.VIPTiers.Count == 0)
+            {
+                Puts("No VIP tiers configured. Add tiers to 'VIP Tiers' in config.");
+                return;
+            }
+
+            var arg0 = arg.GetString(0, "");
+            var arg1 = arg.GetString(1, "");
+            var arg2 = arg.GetString(2, "");
+
+            if (string.IsNullOrEmpty(arg0))
+            {
+                Puts("Usage: openai.vip <userid> [tier_name] | openai.vip remove <userid> <tier_name>");
+                Puts("  openai.vip <userid>           - List VIP tiers for user");
+                Puts("  openai.vip <userid> <tier>    - Grant openai.vip.<tier> to user");
+                Puts("  openai.vip remove <userid> <tier> - Revoke openai.vip.<tier> from user");
+                Puts($"  Valid tiers: {string.Join(", ", _config.VIPTiers.Keys)}");
+                return;
+            }
+
+            if (arg0.Equals("remove", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrEmpty(arg1) || string.IsNullOrEmpty(arg2))
+                {
+                    Puts("Usage: openai.vip remove <userid> <tier_name>");
+                    return;
+                }
+                var userId = arg1;
+                var tierName = arg2;
+                if (!_config.VIPTiers.ContainsKey(tierName))
+                {
+                    Puts($"Unknown tier: {tierName}. Valid: {string.Join(", ", _config.VIPTiers.Keys)}");
+                    return;
+                }
+                var perm = "openai.vip." + tierName;
+                permission.RevokeUserPermission(userId, perm);
+                Puts($"Revoked {perm} from user {userId}.");
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(arg1))
+            {
+                var userId = arg0;
+                var tierName = arg1;
+                if (!_config.VIPTiers.ContainsKey(tierName))
+                {
+                    Puts($"Unknown tier: {tierName}. Valid: {string.Join(", ", _config.VIPTiers.Keys)}");
+                    return;
+                }
+                var perm = "openai.vip." + tierName;
+                permission.GrantUserPermission(userId, perm, this);
+                Puts($"Granted {perm} to user {userId}.");
+                return;
+            }
+
+            var listUserId = arg0;
+            var vipTiers = _config.VIPTiers.Keys.Where(k => permission.UserHasPermission(listUserId, "openai.vip." + k)).ToList();
+            if (vipTiers.Count == 0)
+                Puts($"User {listUserId} has no VIP tiers.");
+            else
+                Puts($"User {listUserId} VIP tiers: {string.Join(", ", vipTiers)}");
         }
 
         [ConsoleCommand("openai.clearcontext")]
@@ -3863,31 +4168,7 @@ namespace Oxide.Plugins
             return Regex.Replace(stripped, @"\s+", " ").Trim();
         }
 
-        // DeathMessage commented out until developer adds hook support
-        // private string FormatDeathMessageForApi(string plainText, string deathType)
-        // {
-        //     if (string.IsNullOrEmpty(plainText))
-        //         return plainText;
-        //
-        //     var m = Regex.Match(plainText, @"^(.+?)\s+suicide\s*$", RegexOptions.IgnoreCase);
-        //     if (deathType == "PlayerSuicide" && m.Success)
-        //         return $"{m.Groups[1].Value.Trim()} committed suicide.";
-        //
-        //     m = Regex.Match(plainText, @"^(\S+)\s+(.+)\s+Kill\s+(\S+)\s+(\S+)\s+(\d+)\s*m?\s*$");
-        //     if (m.Success && (deathType == "PlayerKillPlayer" || deathType == "PlayerKillNPC"))
-        //         return $"{m.Groups[1].Value.Trim()} used {m.Groups[2].Value.Trim()} to kill {m.Groups[3].Value.Trim()} (hit in {m.Groups[4].Value.Trim()}) from {m.Groups[5].Value.Trim()} meters away.";
-        //
-        //     m = Regex.Match(plainText, @"^(\S+)\s+(.+)\s+Kill\s+(.+?)\s+(\d+)\s*m?\s*$");
-        //     if (m.Success && (deathType == "PlayerKillAnimal" || deathType == "PlayerKillEntity" || deathType == "PlayerKillPatrolHelicopter" || deathType == "PlayerKillBradleyapc" || deathType == "NPCKillPlayer"))
-        //         return $"{m.Groups[1].Value.Trim()} used {m.Groups[2].Value.Trim()} to kill {m.Groups[3].Value.Trim()} from {m.Groups[4].Value.Trim()} meters away.";
-        //
-        //     m = Regex.Match(plainText, @"^(.+?)\s+Kill\s+(.+?)\s+(\d+)\s*m?\s*$");
-        //     if (m.Success && (deathType == "AnimalKillPlayer" || deathType == "PatrolHelicopterKillPlayer" || deathType == "BradleyapcKillPlayer" || deathType == "EntityKillPlayer"))
-        //         return $"{m.Groups[2].Value.Trim()} was killed by {m.Groups[1].Value.Trim()} from {m.Groups[3].Value.Trim()} meters away.";
-        //
-        //     return plainText;
-        // }
-
         #endregion
     }
 }
+ 

@@ -1,4 +1,5 @@
-# Notify external webhook when the repo is pushed to GitHub.
+# Notify Discord (or other webhook) when the repo is pushed to GitHub.
+# Set repo secret PLUGIN_UPDATE_WEBHOOK to your Discord webhook URL to get messages in Discord.
 
 name: Plugin Update Webhook
 
@@ -13,18 +14,39 @@ jobs:
       - name: Notify webhook of update
         env:
           PLUGIN_UPDATE_WEBHOOK: ${{ secrets.PLUGIN_UPDATE_WEBHOOK }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           if [ -z "$PLUGIN_UPDATE_WEBHOOK" ]; then
             echo "::warning::PLUGIN_UPDATE_WEBHOOK secret not set, skipping notification"
             exit 0
           fi
+          SHORT_SHA="${{ github.sha }}"
+          SHORT_SHA="${SHORT_SHA:0:7}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          COMMIT_URL="https://github.com/${{ github.repository }}/commit/${{ github.sha }}"
+          MSG_TRUNC="${COMMIT_MSG:0:500}"
+          [ ${#COMMIT_MSG} -gt 500 ] && MSG_TRUNC="${MSG_TRUNC}..."
           PAYLOAD=$(jq -n \
             --arg repo "${{ github.repository }}" \
-            --arg ref "${{ github.ref }}" \
-            --arg sha "${{ github.sha }}" \
+            --arg short_sha "$SHORT_SHA" \
             --arg actor "${{ github.actor }}" \
-            --arg run_id "${{ github.run_id }}" \
-            '{event: "push", message: "Plugin repository was updated", repository: $repo, ref: $ref, sha: $sha, actor: $actor, run_id: $run_id}')
+            --arg run_url "$RUN_URL" \
+            --arg commit_url "$COMMIT_URL" \
+            --arg msg "$MSG_TRUNC" \
+            '{
+              embeds: [{
+                title: "Plugin repository updated",
+                description: ($repo + " was pushed to **main**."),
+                color: 5814783,
+                fields: [
+                  { name: "Commit", value: ("[" + $short_sha + "](" + $commit_url + ")"), inline: true },
+                  { name: "Author", value: $actor, inline: true },
+                  { name: "Message", value: $msg, inline: false },
+                  { name: "Actions", value: ("[View run](" + $run_url + ")"), inline: false }
+                ],
+                timestamp: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
+              }]
+            }')
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
             "$PLUGIN_UPDATE_WEBHOOK" \
             -H "Content-Type: application/json" \

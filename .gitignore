@@ -13,5 +13,5 @@
 !.github/**
 !codefling/
 !codefling/**
-!DEV-HOOKS-README.md
-!VIP-Feature.md
+!docs/
+!docs/**

@@ -1,4 +1,4 @@
-# OpenAI Plugin — VIP Tiers
+# VIP Tiers
 
 This guide explains how to set up and use the **VIP Tiers** feature so selected players get a different AI model and higher token limits (daily limit, max output tokens, cooldown, reasoning effort, web search) without editing Steam ID lists.
 
@@ -8,7 +8,7 @@ This guide explains how to set up and use the **VIP Tiers** feature so selected 
 
 - **VIP Tiers** are defined in the plugin config (`oxide/config/OpenAI.json`). Each tier has a **name** (e.g. `vip_elite`, `vip1`) and settings: model, max output tokens, daily token limit, cooldown, reasoning effort, web search.
 - The **permission** for a tier is always `openai.vip.<tier_name>`. For example, the tier `vip_elite` uses permission `openai.vip.vip_elite`. You do not set the permission in the config — it is derived from the tier name.
-- When a player uses the AI chat, the plugin picks the tier they have permission for and applies that tier’s settings. If a player has more than one VIP permission, **VIP Tier Order** (optional) decides which tier wins; otherwise you can omit it. If they have no VIP tier, default API and rate-limit settings are used.
+- When a player uses the AI chat, the plugin picks the tier they have permission for and applies that tier's settings. If a player has more than one VIP permission, **VIP Tier Order** (optional) decides which tier wins; otherwise you can omit it. If they have no VIP tier, default API and rate-limit settings are used.
 - **openai.unlimited** is unchanged: it bypasses all rate limits. VIP does not bypass limits; it only overrides model and per-player limits.
 
 ---
@@ -21,7 +21,7 @@ Edit `oxide/config/OpenAI.json` and add **VIP Tiers**. **VIP Tier Order** is opt
 
 A list of tier names in **priority order**. It only matters when a player can have **more than one** VIP permission (e.g. two groups granting different tiers). The first tier in this list that the player has is used.
 
-**If you assign VIP programmatically** (e.g. another plugin verifies payment and runs `oxide.grant user <id> openai.vip.vip1`), each player typically has **one** VIP tier. In that case **you do not need VIP Tier Order** — omit it or leave it `[]`. The plugin will still resolve the player’s single tier correctly.
+**If you assign VIP programmatically** (e.g. another plugin verifies payment and runs `oxide.grant user <id> openai.vip.vip1`), each player typically has **one** VIP tier. In that case **you do not need VIP Tier Order** — omit it or leave it `[]`. The plugin will still resolve the player's single tier correctly.
 
 Only set **VIP Tier Order** if players can have multiple VIP permissions and you want to control which tier wins (e.g. premium over basic):
 
@@ -40,7 +40,7 @@ An **object** (key-value map). Each **key** is the tier name; each **value** is 
 | **Daily Token Limit** | int | Per-player daily token limit for this tier. `0` = use default from Rate Limits. |
 | **Cooldown Seconds** | int | Cooldown between requests. `0` = use default from Rate Limits. |
 | **Reasoning Effort** | string | e.g. `none`, `low`, `medium`, `high`. Empty = use default from API Settings. |
-| **Web Search Enabled** | bool | Override API-level “Enable Web Search” for this tier. |
+| **Web Search Enabled** | bool | Override API-level "Enable Web Search" for this tier. |
 
 ### Example config block
 
@@ -109,7 +109,7 @@ Example:
 openai.vip remove 76561198012345678 vip_elite
 ```
 
-**List a player’s VIP tiers**
+**List a player's VIP tiers**
 
 ```text
 openai.vip <Steam64ID>
@@ -136,7 +136,7 @@ Shows usage and valid tier names from your config.
    - **oxide.grant user** \<Steam64ID\> **openai.vip.vip_elite**
    - Or add **openai.vip.vip_elite** to a group and add the player to that group (**oxide.usergroup add** \<Steam64ID\> \<group\>).
 
-Players with that permission then get that tier’s model and limits when using the AI.
+Players with that permission then get that tier's model and limits when using the AI.
 
 ---
 
@@ -162,13 +162,13 @@ Anyone in `vip_ai` will use the `vip_elite` tier (assuming that tier is in your 
 ## 4. Checking That VIP Is Applied
 
 - **Admins:** Run **openai.status** (server console or F1) for full plugin status.
-- **VIP players:** If a player has a VIP tier, they can run **openai.status** in F1; they will see their **effective** model, daily limit, and cooldown for their tier (e.g. “Effective model: gpt-4 (VIP tier: vip_elite)”).
+- **VIP players:** If a player has a VIP tier, they can run **openai.status** in F1; they will see their **effective** model, daily limit, and cooldown for their tier (e.g. "Effective model: gpt-4 (VIP tier: vip_elite)").
 
 ---
 
 ## 5. Tips
 
-- **One tier per player:** If another plugin (e.g. payment/verification) grants a single permission like `openai.vip.vip1`, you don’t need **VIP Tier Order**. Only use it when a player can have multiple VIP permissions and you want to choose which tier applies (e.g. premium over basic).
+- **One tier per player:** If another plugin (e.g. payment/verification) grants a single permission like `openai.vip.vip1`, you don't need **VIP Tier Order**. Only use it when a player can have multiple VIP permissions and you want to choose which tier applies (e.g. premium over basic).
 - **No Steam ID lists:** VIP is entirely permission-based. Use Oxide groups and the **openai.vip** command instead of maintaining Steam ID lists in config.
 - **openai.unlimited:** Players with **openai.unlimited** still bypass all rate limits; VIP does not change that. VIP only overrides model and per-player limits for players who do not have unlimited.
 - **New tiers:** Add a new key under **VIP Tiers** in config, save, and reload the plugin. The new permission `openai.vip.<new_key>` is registered automatically. Use **openai.vip** (no args) to see valid tier names.
@@ -181,7 +181,7 @@ Anyone in `vip_ai` will use the `vip_elite` tier (assuming that tier is in your 
 |------|-------------------|
 | Grant tier | `openai.vip <Steam64ID> <tier_name>` |
 | Revoke tier | `openai.vip remove <Steam64ID> <tier_name>` |
-| List user’s tiers | `openai.vip <Steam64ID>` |
+| List user's tiers | `openai.vip <Steam64ID>` |
 | Permission format | `openai.vip.<tier_name>` (e.g. `openai.vip.vip_elite`) |
 | Required admin perm | **openai.admin** (for **openai.vip** command) |
 
